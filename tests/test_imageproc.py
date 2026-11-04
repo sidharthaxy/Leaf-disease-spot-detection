@@ -112,7 +112,7 @@ def test_plant_gate_rejects_non_plant_and_accepts_leaves():
     # a hand-like skin-tone blob on a white wall: no green tissue at all
     wall = np.full((400, 300, 3), (225, 228, 230), np.uint8)
     cv2.ellipse(wall, (150, 200), (90, 150), 0, 0, 360, (60, 80, 120), -1)
-    assert check_plant(wall)["status"] == "not_plant"
+    assert check_plant(wall)["status"] == "out_of_scope"
     # diseased and healthy synthetic leaves pass
     for lesions in (((150, 140, 22), (220, 200, 15)), ()):
         img, _, _ = synthetic_leaf(lesions=lesions)

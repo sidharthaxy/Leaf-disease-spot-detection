@@ -138,12 +138,13 @@ function NotAPlant({ result, preview }) {
   return (
     <section className="cards">
       <div className="card reject">
-        <h2>Not a plant</h2>
-        <div className="big">This doesn't look like a leaf</div>
+        <h2>Outside this system's scope</h2>
+        <div className="big">No green leaf tissue found</div>
         <p className="muted">{result.plant_check.message}</p>
         <p className="muted">
-          The disease classifier can only choose between 125 plant classes, so it would name a plant disease for any
-          image; this green-tissue check runs first to stop that. Try a photo of a leaf.
+          This system is built for green leaves: disease is measured as "not healthy green", and the classifier only
+          knows 125 plant classes, so it would name a plant disease for any image. This check runs first to stop that.
+          Try a photo of a green (or partly green, diseased) leaf.
         </p>
       </div>
       <figure><img src={preview || result.images.original} alt="uploaded" /><figcaption>Uploaded image</figcaption></figure>

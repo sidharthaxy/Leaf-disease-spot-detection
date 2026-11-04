@@ -191,10 +191,11 @@ def health():
 async def analyze(file: UploadFile = File(...)):
     t0 = time.time()
     img = read_upload(await file.read())
-    # 1) "is this a plant?" gate: the CNN is closed-set and the leaf mask is relative, so without this a
-    #    hand or a wall would be analysed as a leaf (src/imageproc/plant_check.py)
+    # 1) scope gate: is there green leaf tissue? The CNN is closed-set and the leaf mask is relative, so without
+    #    this a hand or a wall would be analysed as a leaf; non-green leaves are also out of scope
+    #    (src/imageproc/plant_check.py)
     gate = check_plant(preprocess(img)[0], load_yaml("disease_profiles.yaml").get("plant_check"))
-    if gate["status"] == "not_plant":
+    if gate["status"] == "out_of_scope":
         return {"rejected": True, "plant_check": gate, "images": {"original": b64(img)},
                 "timing_s": round(time.time() - t0, 2)}
     result, masks = ours_full(img)

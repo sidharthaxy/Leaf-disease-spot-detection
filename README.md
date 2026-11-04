@@ -15,6 +15,12 @@ the step-by-step image-processing evidence behind that number.
 - **Stage D (validation):** the classical pipeline is measured pixel-by-pixel against the
   **expert lesion masks of PlantSeg**, something most leaf-disease projects cannot do.
 
+> **Scope: green leaves only.** The system measures disease as "not healthy green" tissue, and the
+> classifier knows only 125 plant classes. A first check therefore stops any image without green leaf
+> tissue: photos without a plant (hands, walls, tables) **and** leaves that are not green, such as red
+> maple or purple cabbage, which it would otherwise grade as almost fully infected. A green object that is
+> not a plant can still get through. Details: §7 (scope gate) and §14.
+
 **Quick start (macOS, Linux or Windows):** `git clone`, install the Python requirements, run the demo:
 everything needed (trained weights, calibrated ensemble, learned severity model, 29 example images) is in
 this repository. See [§16](#16-run-it-yourself).
@@ -143,8 +149,8 @@ switch** (−0.1 pp).
 
 ```mermaid
 flowchart TD
-    IMG[/"Leaf photo (any size, in the wild)"/] --> GATE{"0 · is it a plant?<br/>green-tissue share ≥ 0.5 %"}
-    GATE -- "no: 'not a plant', stop" --> OUT
+    IMG[/"Leaf photo (any size, in the wild)"/] --> GATE{"0 · green leaf tissue present?<br/>green-tissue share ≥ 0.5 %"}
+    GATE -- "no: 'outside scope', stop" --> OUT
     GATE -- yes --> PRE
 
     subgraph A["Stage A: deep learning (what is it?)"]
@@ -257,7 +263,7 @@ image (`run_pipeline(...)["steps"]`, the demo's step strip, `reports/figures/pip
 
 | Step | Technique | Why |
 |---|---|---|
-| 0. Plant gate | share of the image that is green plant tissue: ExG > 0.05 **and** HSV saturation ≥ 40; < 0.5 % → "not a plant" (stop), < 3 % → warning | the CNN is closed-set (it names a plant disease for *any* image) and the ExG + Otsu leaf mask is relative, so a hand or a wall would otherwise be "analysed". On 464 real plant photos the share is ≥ 1 % (median 76 %); non-plant scenes give ~0 % |
+| 0. Scope gate | share of the image that is green plant tissue: ExG > 0.05 **and** HSV saturation ≥ 40; < 0.5 % → "outside this system's scope" (stop), < 3 % → warning | the CNN is closed-set (it names a plant disease for *any* image) and the ExG + Otsu leaf mask is relative, so a hand or a wall would otherwise be "analysed"; non-green leaves (red maple, purple cabbage) are also out of scope, since disease is measured as "not healthy green". On 464 real plant photos the share is ≥ 1 % (median 76 %); non-plant scenes give ~0 % |
 | 1. Preprocess | resize (long side 768, `INTER_AREA`), median filter 5×5, **CLAHE on the L channel of Lab** | Lab separates lightness from colour, so contrast improves without shifting lesion hues |
 | 2. Leaf mask | **ExG+** (ours): Excess Green `2g − r − b` on chromatic coordinates + Otsu, with a cap so clearly green pixels are always leaf; plus symptom-coloured pixels (yellow/brown/white/dark) that are near green tissue **and inside the convex hull** of a green region; closing, hole filling, keep largest components | plain ExG+Otsu splits full-frame leaves in two and cuts off diseased margins (kept only 23 % of true lesion pixels); ExG+ keeps 94 % |
 | 3. Lesions (per symptom group) | necrotic: **vote** = HSV "not healthy green" ∩ ΔE-from-the-leaf's-own-healthy-colour (+ hysteresis); chlorosis: **Lab b\*** > max(Otsu, floor); powdery: **k-means (k=4) in Lab**, whitest clusters; rust: **HSV** orange band; generic: HSV "not healthy green" | each symptom has a different colour signature; the method per group was chosen on validation (grid search, then the full validation split) |
@@ -288,8 +294,9 @@ as Horsfall–Barratt; they are not an agronomic standard.
 - **Healthy verification:** when the CNN says *healthy*, the pipeline must find ≥ 10 % infected area to
   overturn it (median false positive on healthy validation leaves is 0.7 %, so small detections are
   glare, veins or background).
-- **Not a plant:** images with < 0.5 % green plant tissue are rejected before any analysis; 0.5–3 % gives a
-  "results may be unreliable" warning (in our data that range only contains fruit / root photos).
+- **Outside scope:** images with < 0.5 % green plant tissue are stopped before any analysis, with a message
+  that this is either not a plant or a non-green leaf (e.g. red maple); 0.5–3 % gives a "results may be
+  unreliable" warning (in our data that range only contains fruit / root photos).
 - **Non-leaf diseases** (fruit/heads/stems) trigger a warning that leaf-area severity is approximate.
 - **Learned estimate:** next to the measured %, the system reports a learned estimate of the
   expert-annotated affected area (§10.6); it is the more accurate severity number, while the measured %
@@ -569,6 +576,7 @@ Most public leaf-disease projects (typically PlantVillage-based) stop at classif
 | Ensemble of two CNNs | +2.0 pp top-1, +0.023 macro-F1 over the best single model | ~2× inference time (~0.6 s for both on a laptop CPU), ~1.2 GB RAM for the whole demo |
 | Shared-denominator severity | isolates lesion-detection error | does not validate leaf segmentation itself (no leaf ground truth exists) |
 | Fixed severity cut-offs | simple, configurable | assumptions, not agronomic standards |
+| Green-tissue scope gate before the analysis | stops non-plant photos (0.0 % green) without touching any of 464 real leaf photos | non-green leaves (red maple, purple cabbage) are rejected too, and a green non-plant object still passes |
 
 ---
 
@@ -608,10 +616,12 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 - **Lab-vs-wild gap and label noise:** some PlantSeg photos are posters, documents or annotated images;
   identical photos appear under two diseases.
 - **Thresholds are assumptions** (severity cut-offs, uncertainty threshold).
-- **The CNN is closed-set:** it always answers with one of its 125 plant classes. The green-tissue gate
-  stops images with no plant tissue (hands, walls, tables), but a non-plant object that is green (a green
-  shirt, a painted wall) would pass it. A learned out-of-distribution detector (e.g. an "unknown" class
-  trained on non-plant images, or a feature-distance check) is future work.
+- **Green leaves only, and a closed-set CNN:** the classifier always answers with one of its 125 plant
+  classes, and the lesion detectors treat healthy tissue as green. The green-tissue gate therefore stops
+  images without green plant tissue: non-plants (hands, walls, tables) **and** non-green leaves (red maple,
+  purple cabbage), which the system cannot measure correctly. A green non-plant object (a green shirt, a
+  painted wall) would still pass it. A learned out-of-distribution detector (an "unknown" class trained on
+  non-plant images, or a feature-distance check) and colour models for non-green leaves are future work.
 - **Future work:** train a segmentation network on the PlantSeg masks and compare it with the classical
   pipeline under the same protocol; per-plant leaf-colour models; a learned symptom-group detector for
   non-leaf organs; leaf segmentation with a promptable model (e.g. SAM) seeded by the ExG+ mask.
@@ -698,7 +708,7 @@ from src.severity.grade import resolve_from_prediction
 from src.imageproc.pipeline import run_pipeline
 
 img = cv2.imread("leaf.jpg")
-# from src.imageproc.plant_check import check_plant   -> {"status": "ok" | "low_green" | "not_plant", ...}
+# from src.imageproc.plant_check import check_plant   -> {"status": "ok" | "low_green" | "out_of_scope", ...}
 clf = EnsembleClassifier("configs/inference.yaml")
 pred = clf.predict(img, k=125)                      # all class probabilities
 res = resolve_from_prediction(pred["topk"])         # -> symptom group / uncertainty
