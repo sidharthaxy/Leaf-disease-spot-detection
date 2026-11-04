@@ -11,6 +11,11 @@
 # small dev sample. They are ASSUMPTIONS to be validated in Stage D, not agronomic standards.
 # OpenCV ranges: HSV H 0..179, S/V 0..255; Lab stored as uint8 with a*, b* offset by +128.
 
+# "Is this a plant?" gate (src/imageproc/plant_check.py), run before anything else.
+# green tissue = ExG > exg_min and HSV saturation >= s_min. Measured on 464 real plant photos: median 76 %,
+# 99.5 % above 5.3 %, lowest 1.0 % (fruit) / 2.5 % (root); synthetic non-plant scenes 0.0 %.
+plant_check: {exg_min: 0.05, s_min: 40, reject_below_pct: 0.5, warn_below_pct: 3.0}
+
 leaf:
   method: exg_plus       # exg | hsv | grabcut | exg_plus (compared in the report)
 

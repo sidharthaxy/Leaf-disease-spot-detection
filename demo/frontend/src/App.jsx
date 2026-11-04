@@ -134,9 +134,29 @@ function Steps({ images }) {
   )
 }
 
+function NotAPlant({ result, preview }) {
+  return (
+    <section className="cards">
+      <div className="card reject">
+        <h2>Not a plant</h2>
+        <div className="big">This doesn't look like a leaf</div>
+        <p className="muted">{result.plant_check.message}</p>
+        <p className="muted">
+          The disease classifier can only choose between 125 plant classes, so it would name a plant disease for any
+          image; this green-tissue check runs first to stop that. Try a photo of a leaf.
+        </p>
+      </div>
+      <figure><img src={preview || result.images.original} alt="uploaded" /><figcaption>Uploaded image</figcaption></figure>
+    </section>
+  )
+}
+
 function Result({ result, preview }) {
+  if (result.rejected) return <NotAPlant result={result} preview={preview} />
+  const pc = result.plant_check
   return (
     <>
+      {pc && pc.status === 'low_green' && <div className="error warnbox">{pc.message}</div>}
       <section className="cards">
         <Diagnosis c={result.classifier} />
         <Severity s={result.severity} />

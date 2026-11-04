@@ -29,6 +29,8 @@ from src.evaluation.metrics import mask_metrics
 from src.imageproc import viz
 from src.imageproc.pipeline import run_pipeline
 from src.imageproc.preprocess import resize_mask_like
+from src.imageproc.plant_check import check_plant
+from src.imageproc.preprocess import preprocess
 from src.imageproc.standard import run_standard
 from src.severity.grade import load_yaml, resolve_from_prediction, severity_label
 
@@ -189,7 +191,14 @@ def health():
 async def analyze(file: UploadFile = File(...)):
     t0 = time.time()
     img = read_upload(await file.read())
+    # 1) "is this a plant?" gate: the CNN is closed-set and the leaf mask is relative, so without this a
+    #    hand or a wall would be analysed as a leaf (src/imageproc/plant_check.py)
+    gate = check_plant(preprocess(img)[0], load_yaml("disease_profiles.yaml").get("plant_check"))
+    if gate["status"] == "not_plant":
+        return {"rejected": True, "plant_check": gate, "images": {"original": b64(img)},
+                "timing_s": round(time.time() - t0, 2)}
     result, masks = ours_full(img)
+    result["plant_check"] = gate
     std = run_standard(img)
     result["standard"] = standard_json(std)
     result["comparison"] = {"diff": b64(diff_image(masks["base"], masks["lesion"], std["lesion_mask"]))}
@@ -225,6 +234,7 @@ def compare(example_id: int):
     r = row.iloc[0]
     img = cv2.imread(str(EXAMPLES / r.image_path))
     result, masks = ours_full(img)
+    result["plant_check"] = check_plant(preprocess(img)[0], load_yaml("disease_profiles.yaml").get("plant_check"))
     std = run_standard(img)
     base = masks["base"]
     gt = None

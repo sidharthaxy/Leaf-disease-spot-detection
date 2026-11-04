@@ -143,7 +143,9 @@ switch** (−0.1 pp).
 
 ```mermaid
 flowchart TD
-    IMG[/"Leaf photo (any size, in the wild)"/] --> PRE
+    IMG[/"Leaf photo (any size, in the wild)"/] --> GATE{"0 · is it a plant?<br/>green-tissue share ≥ 0.5 %"}
+    GATE -- "no: 'not a plant', stop" --> OUT
+    GATE -- yes --> PRE
 
     subgraph A["Stage A: deep learning (what is it?)"]
         CNN1["EfficientNetV2-S @384<br/>(ONNX, CPU)"]
@@ -166,8 +168,8 @@ flowchart TD
         PRE --> LEAF --> LES --> POST --> MEAS
     end
 
-    IMG --> CNN1
-    IMG --> CNN2
+    GATE -- yes --> CNN1
+    GATE -- yes --> CNN2
     GRP -- "profile: method, colour ranges,<br/>measure, severity scale" --> LES
     GRP -- "low confidence: disease flagged<br/>uncertain + top-3 shown" --> OUT
 
@@ -255,6 +257,7 @@ image (`run_pipeline(...)["steps"]`, the demo's step strip, `reports/figures/pip
 
 | Step | Technique | Why |
 |---|---|---|
+| 0. Plant gate | share of the image that is green plant tissue: ExG > 0.05 **and** HSV saturation ≥ 40; < 0.5 % → "not a plant" (stop), < 3 % → warning | the CNN is closed-set (it names a plant disease for *any* image) and the ExG + Otsu leaf mask is relative, so a hand or a wall would otherwise be "analysed". On 464 real plant photos the share is ≥ 1 % (median 76 %); non-plant scenes give ~0 % |
 | 1. Preprocess | resize (long side 768, `INTER_AREA`), median filter 5×5, **CLAHE on the L channel of Lab** | Lab separates lightness from colour, so contrast improves without shifting lesion hues |
 | 2. Leaf mask | **ExG+** (ours): Excess Green `2g − r − b` on chromatic coordinates + Otsu, with a cap so clearly green pixels are always leaf; plus symptom-coloured pixels (yellow/brown/white/dark) that are near green tissue **and inside the convex hull** of a green region; closing, hole filling, keep largest components | plain ExG+Otsu splits full-frame leaves in two and cuts off diseased margins (kept only 23 % of true lesion pixels); ExG+ keeps 94 % |
 | 3. Lesions (per symptom group) | necrotic: **vote** = HSV "not healthy green" ∩ ΔE-from-the-leaf's-own-healthy-colour (+ hysteresis); chlorosis: **Lab b\*** > max(Otsu, floor); powdery: **k-means (k=4) in Lab**, whitest clusters; rust: **HSV** orange band; generic: HSV "not healthy green" | each symptom has a different colour signature; the method per group was chosen on validation (grid search, then the full validation split) |
@@ -285,6 +288,8 @@ as Horsfall–Barratt; they are not an agronomic standard.
 - **Healthy verification:** when the CNN says *healthy*, the pipeline must find ≥ 10 % infected area to
   overturn it (median false positive on healthy validation leaves is 0.7 %, so small detections are
   glare, veins or background).
+- **Not a plant:** images with < 0.5 % green plant tissue are rejected before any analysis; 0.5–3 % gives a
+  "results may be unreliable" warning (in our data that range only contains fruit / root photos).
 - **Non-leaf diseases** (fruit/heads/stems) trigger a warning that leaf-area severity is approximate.
 - **Learned estimate:** next to the measured %, the system reports a learned estimate of the
   expert-annotated affected area (§10.6); it is the more accurate severity number, while the measured %
@@ -603,6 +608,10 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 - **Lab-vs-wild gap and label noise:** some PlantSeg photos are posters, documents or annotated images;
   identical photos appear under two diseases.
 - **Thresholds are assumptions** (severity cut-offs, uncertainty threshold).
+- **The CNN is closed-set:** it always answers with one of its 125 plant classes. The green-tissue gate
+  stops images with no plant tissue (hands, walls, tables), but a non-plant object that is green (a green
+  shirt, a painted wall) would pass it. A learned out-of-distribution detector (e.g. an "unknown" class
+  trained on non-plant images, or a feature-distance check) is future work.
 - **Future work:** train a segmentation network on the PlantSeg masks and compare it with the classical
   pipeline under the same protocol; per-plant leaf-colour models; a learned symptom-group detector for
   non-leaf organs; leaf segmentation with a promptable model (e.g. SAM) seeded by the ExG+ mask.
@@ -626,7 +635,7 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 ├── src/
 │   ├── data/                     # prepare_raw_data.py (download + inspect), build_manifest.py, dataset.py
 │   ├── classifier/               # model.py, train.py, ensemble.py, calibrate.py, infer.py (ONNX), gradcam.py
-│   ├── imageproc/                # preprocess, leaf_seg, lesion_seg, morphology, measure, viz, pipeline, standard
+│   ├── imageproc/                # plant_check, preprocess, leaf_seg, lesion_seg, morphology, measure, viz, pipeline, standard
 │   ├── severity/                 # grade.py: profiles, severity scale, uncertainty rule
 │   ├── evaluation/               # metrics, run_eval, summarize, tune, select_methods, features,
 │   │                             #   learned_correction, error_analysis, figures
@@ -658,7 +667,7 @@ git clone https://github.com/sidharthaxy/Leaf-disease-spot-detection.git && cd L
 python3.11 -m venv .venv
 .venv/bin/pip install -r requirements/local.txt
 # macOS only: XGBoost needs the OpenMP runtime ->  brew install libomp
-.venv/bin/python -m pytest tests -q          # optional: 11 unit tests
+.venv/bin/python -m pytest tests -q          # optional: 12 unit tests
 bash demo/run_demo.sh                        # opens http://localhost:5173
 ```
 
@@ -689,6 +698,7 @@ from src.severity.grade import resolve_from_prediction
 from src.imageproc.pipeline import run_pipeline
 
 img = cv2.imread("leaf.jpg")
+# from src.imageproc.plant_check import check_plant   -> {"status": "ok" | "low_green" | "not_plant", ...}
 clf = EnsembleClassifier("configs/inference.yaml")
 pred = clf.predict(img, k=125)                      # all class probabilities
 res = resolve_from_prediction(pred["topk"])         # -> symptom group / uncertainty

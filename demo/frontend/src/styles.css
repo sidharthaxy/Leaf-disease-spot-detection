@@ -94,3 +94,8 @@ footer { margin-top: 20px; }
 .selbox { display: flex; gap: 12px; align-items: center; margin-left: auto; }
 .results-anchor { scroll-margin-top: 12px; }
 .loading { margin-top: 20px; padding: 14px 16px; border-radius: 10px; background: var(--card); border: 1px dashed var(--accent); color: var(--muted); }
+
+/* --- "is this a plant?" gate --- */
+.card.reject { border-color: var(--severe); }
+.card.reject h2 { color: var(--severe); }
+.warnbox { background: #fff4e5; color: #8a4b00; margin-top: 20px; }
