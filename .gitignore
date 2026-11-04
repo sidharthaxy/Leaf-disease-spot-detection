@@ -1,0 +1,52 @@
+# --- Data (downloaded / generated locally; only demo/examples/ is redistributed, with attribution) ---
+/data/
+*.zip
+*.tar
+*.tar.gz
+
+# --- Model artifacts (only the released weights in models/ are tracked) ---
+*.pt
+*.pth
+*.onnx
+*.ckpt
+!models/**
+checkpoints/
+outputs/
+runs/
+
+# --- Secrets ---
+.env
+*.pem
+credentials
+.aws/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+
+# --- Node / frontend ---
+node_modules/
+dist/
+
+# --- OS / editor ---
+.DS_Store
+.vscode/
+.idea/
+.venv-aws/
+
+# Figures that contain PlantSeg/PlantDoc photos (licence: no redistribution of derived copies here)
+reports/figures/*.jpg
+
+# --- Local development / cloud set-up material (not part of the public repo) ---
+CLAUDE.md
+.claude/
+sagemaker/
+run_all.sh
+Dockerfile
+requirements/aws.txt
+src/evaluation/sm_eval_entry.py

@@ -1,0 +1,10 @@
+# Extra packages for TRAINING, installed on top of a CUDA build of PyTorch (see README section 16.3):
+#   pip install torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu121
+# Also works on Kaggle / Colab:  pip install -r requirements/train.txt
+timm==1.0.9
+huggingface_hub==0.25.2
+safetensors
+onnx==1.16.2
+scikit-learn
+pandas
+PyYAML

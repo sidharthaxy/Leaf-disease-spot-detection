@@ -1,0 +1,8 @@
+# Final classifier, chosen on the validation split by src/classifier/ensemble.py
+# temperature: fitted on validation by src/classifier/calibrate.py
+model_dirs:
+- models/effv2s384
+- models/convnext384
+plant_alpha: 0.0
+temperature: 0.6982
+tta: false

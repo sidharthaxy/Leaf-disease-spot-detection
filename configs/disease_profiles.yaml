@@ -1,0 +1,113 @@
+# Disease-aware parameters for the classical pipeline (Stage B).
+#
+# Each disease predicted by the classifier is mapped to a SYMPTOM GROUP. Each group says which
+# lesion method to use and the colour ranges that describe its symptoms.
+#
+# Mapping order:  1. explicit `overrides` (exact class label)
+#                 2. keyword `rules` matched against the disease name (first match wins)
+#                 3. `generic`
+#
+# NOTE: these values are starting points chosen from colour-science reasoning and tuned on our
+# small dev sample. They are ASSUMPTIONS to be validated in Stage D, not agronomic standards.
+# OpenCV ranges: HSV H 0..179, S/V 0..255; Lab stored as uint8 with a*, b* offset by +128.
+
+leaf:
+  method: exg_plus       # exg | hsv | grabcut | exg_plus (compared in the report)
+
+groups:
+  generic:
+    description: "Unknown or uncertain disease: anything clearly not healthy green."
+    lesion_method: hsv        # tuned on val dev set (was kmeans): Dice 0.17 -> 0.36
+    hsv:    {mode: nongreen, green_h_min: 33, green_h_max: 90, green_s_min: 25}
+    lab:    {channel: a, direction: high, floor: 128, offset: 0}
+    kmeans: {k: 4, score: hue, min_delta: 25}
+    post:   {open_k: 3, close_k: 5, fill_holes: true, min_area_px: 20}
+
+  necrotic:
+    description: "Brown/black dead tissue: blights, leaf spots, anthracnose, scab, rots."
+    lesion_method: hsv&delta_e  # round 2 (full val, src/evaluation/select_methods.py): voting HSV ∩ ΔE;
+                                # Dice 0.295 -> 0.326, MAE 15.2 -> 17.1 (objective Dice - MAE/100: 0.143 -> 0.155)
+    hsv:    {mode: nongreen, green_h_min: 30, green_h_max: 90, green_s_min: 35}
+    lab:    {channel: a, direction: high, floor: 126, offset: 0}
+    kmeans: {k: 4, score: hue, min_delta: 30}
+    delta_e: {floor: 25, ratio: 0.8, w_L: 0.6, ref_frac: 0.4}   # tuned for hsv&delta_e (val dev)
+    post:   {open_k: 3, close_k: 5, fill_holes: true, min_area_px: 20}
+
+  powdery:
+    description: "White/grey powdery coating: low saturation, high value."
+    lesion_method: kmeans     # tuned on val dev set (was hsv): Dice 0.46 -> 0.54
+    hsv:    {mode: powdery, s_max: 60, v_min: 160}
+    lab:    {channel: L, direction: high, floor: 170, offset: 0}
+    kmeans: {k: 4, score: white, min_delta: 20}
+    delta_e: {floor: 10, ratio: 0.6, w_L: 0.6, ref_frac: 0.4}   # tuned for lab&delta_e (val dev)
+    post:   {open_k: 3, close_k: 7, fill_holes: true, min_area_px: 30}
+
+  chlorosis:
+    description: "Yellowing / mosaic / mottling (viruses, yellow leaf curl, downy-mildew upper surface)."
+    lesion_method: lab        # tuned on val dev set (was kmeans): Dice 0.19 -> 0.39
+    hsv:    {mode: band, h_min: 15, h_max: 34, s_min: 60, v_min: 80}
+    lab:    {channel: b, direction: high, floor: 132, offset: 6}
+    kmeans: {k: 4, score: hue, min_delta: 20}
+    delta_e: {floor: 10, ratio: 0.6, w_L: 0.6, ref_frac: 0.4}   # tuned for lab&delta_e (val dev)
+    post:   {open_k: 3, close_k: 7, fill_holes: false, min_area_px: 40}
+
+  rust:
+    description: "Orange-brown pustules, small and dense."
+    lesion_method: hsv        # tuned on val dev set: best Dice (0.25) of the 4 methods
+    zone_frac: 0.10           # severity = affected zone (pustule clusters merged by closing):
+                              # val dev MAE 21.4 -> 17.9, Dice 0.25 -> 0.39
+    hsv:    {mode: band, h_min: 4, h_max: 24, s_min: 90, v_min: 70}
+    lab:    {channel: a, direction: high, floor: 135, offset: 0}
+    kmeans: {k: 4, score: a, min_delta: 15}
+    delta_e: {floor: 10, ratio: 0.6, w_L: 0.6, ref_frac: 0.4}   # tuned for hsv&delta_e (val dev)
+    post:   {open_k: 2, close_k: 3, fill_holes: true, min_area_px: 6}
+
+  healthy:
+    description: "Predicted healthy: run a strict detector only to VERIFY ~0 % infection."
+    lesion_method: lab        # tuned on healthy val leaves: lowest false-positive %
+    hsv:    {mode: nongreen, green_h_min: 30, green_h_max: 90, green_s_min: 35}
+    lab:    {channel: a, direction: high, floor: 136, offset: 6}
+    kmeans: {k: 3, score: hue, min_delta: 35}
+    post:   {open_k: 3, close_k: 5, fill_holes: true, min_area_px: 40}
+
+# keyword -> group, checked in order against the lower-cased disease name
+rules:
+  - {keywords: [healthy], group: healthy}
+  - {keywords: [powdery], group: powdery}
+  - {keywords: [rust], group: rust}
+  - {keywords: [mosaic, curl, yellow, chlorosis, mottle, streak virus, virus, greening, downy], group: chlorosis}
+  - {keywords: [blight, spot, anthracnose, scab, rot, canker, necrosis, blotch, scorch, mold, mould, smut, wilt], group: necrotic}
+
+# exact class label -> group, for classes the keywords miss or get wrong (after inspecting PlantSeg)
+overrides:
+  Banana___black_leaf_streak: necrotic       # dark necrotic streaks
+  Banana___bunchy_top: chlorosis             # yellowing, chlorotic margins
+  Banana___panama_disease: chlorosis         # yellowing / wilting leaves
+  Blueberry___mummy_berry: necrotic          # shrivelled brown/grey berries
+  Grape___grapevine_leafroll_disease: necrotic  # reddening / browning blades (a* high)
+  Plum___pocket_disease: generic             # deformed fruit
+  Rice___blast: necrotic                     # diamond-shaped grey-brown lesions
+  Wheat___bacterial_leaf_streak_(black_chaff): necrotic
+
+# Diseases whose PlantSeg photos mostly show FRUIT, HEADS, STEMS or ROOTS rather than leaves.
+# Leaf-area severity is less meaningful there, so they are reported as a separate subset and the
+# demo shows a warning. (Mixed leaf+fruit diseases, e.g. apple black rot, stay in the leaf set.)
+non_leaf_labels:
+  - Banana___anthracnose
+  - Banana___cigar_end_rot
+  - Bell_pepper___blossom_end_rot
+  - Blueberry___mummy_berry
+  - Carrot___cavity_spot
+  - Cauliflower___bacterial_soft_rot
+  - Coffee___berry_blotch
+  - Corn___smut
+  - Eggplant___phomopsis_fruit_rot
+  - Peach___brown_rot
+  - Plum___brown_rot
+  - Plum___pocket_disease
+  - Raspberry___gray_mold
+  - Rice___sheath_blight
+  - Ginger___sheath_blight
+  - Wheat___head_scab
+  - Wheat___loose_smut
+  - Wheat___stem_rust

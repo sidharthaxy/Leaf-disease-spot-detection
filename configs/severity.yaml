@@ -1,0 +1,36 @@
+# Stage C: severity grading thresholds on infected % of leaf area.
+#
+# These are CONFIGURABLE ASSUMPTIONS, not authoritative agronomy. The idea of grading by
+# percentage of diseased area, with finer classes at low severity, is inspired by standard
+# visual rating scales such as the Horsfall-Barratt scale; the exact cut-offs below are ours.
+#
+# Each scale is a list of [upper_bound_exclusive, label]; the last entry catches everything above.
+
+default:
+  - [1.0, Healthy]
+  - [10.0, Mild]
+  - [25.0, Moderate]
+  - [101.0, Severe]
+
+# Optional per-symptom-group scales (fall back to `default`).
+# (Rust used to have a stricter scale for individual pustule area; since rust severity is now
+#  measured as the affected ZONE - see disease_profiles.yaml - it uses the default scale.)
+per_group:
+
+  # When the CNN confidently predicts HEALTHY, the pipeline acts as a verifier: small detections
+  # (glare, veins, stems, background specks; median false positive on healthy val leaves = 0.7 %)
+  # don't overturn the classifier; >= 10 % infected area does.
+  healthy:
+    - [10.0, Healthy]
+    - [25.0, Moderate]
+    - [101.0, Severe]
+
+# Classifier confidence handling
+confidence:
+  min_confidence: 0.50     # below this: report "uncertain disease" and show the top-3
+  # Which profile to use when the CNN is unsure. Compared on the VALIDATION split (severity MAE, pp):
+  #   top1 (fall back to generic if p(top-1 disease) < 0.5) 19.8 | group (fallback if p(group) < 0.5) 17.3
+  #   none (always use the predicted group)                17.2  <- chosen; also fewest healthy false positives
+  # i.e. even an uncertain, specific profile beats the generic one.
+  rule: none
+  top_k: 3

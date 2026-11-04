@@ -1,0 +1,20 @@
+# Stage A training config. Every key can be overridden on the CLI: --epochs 2 --img-size 128 ...
+backbone: efficientnet_b0        # alt: convnext_tiny
+pretrained: true
+img_size: 320
+batch_size: 64
+epochs: 25
+frozen_epochs: 3                 # train only the heads first, then unfreeze the backbone
+lr_head: 1.0e-3
+lr_backbone: 3.0e-4
+weight_decay: 0.05
+warmup_epochs: 1
+label_smoothing: 0.1
+plant_loss_weight: 0.3           # auxiliary plant head
+sampler_power: 0.5               # class-balanced sampling: weight ~ 1 / count^power (0 = off, 1 = full)
+patience: 6                      # early stopping on val macro-F1
+num_workers: 4
+seed: 42
+limit: 0                         # >0: use only N images per split (local smoke test)
+max_steps: 0                     # >0: stop each epoch after N steps (local smoke test)
+export_onnx: true
