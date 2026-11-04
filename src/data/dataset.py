@@ -70,8 +70,8 @@ class LeafDataset(Dataset):
     def __len__(self):
         return len(self.df)
 
-    def __getitem__(self, i):
-        r = self.df.iloc[i]
+    def __getitem__(self, index):
+        r = self.df.iloc[index]
         img = Image.open(self.root / r.image_path)
         img.draft("RGB", (1024, 1024))  # fast JPEG downscale-on-decode for huge photos (before loading)
         x = self.transform(img.convert("RGB"))

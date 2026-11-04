@@ -68,7 +68,7 @@ def exg_otsu(img: np.ndarray, cfg: dict | None = None) -> tuple[np.ndarray, dict
     exg = exg_index(img)
     # map ExG to 0..255 so OpenCV's Otsu can run on it
     lo, hi = float(exg.min()), float(exg.max())
-    exg_u8 = cv2.normalize(exg, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    exg_u8 = cv2.normalize(exg, np.empty_like(exg), 0.0, 255.0, cv2.NORM_MINMAX).astype(np.uint8)
     thr, mask = cv2.threshold(exg_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     thr_exg = lo + thr / 255.0 * (hi - lo)              # Otsu threshold back in ExG units
     if cfg.get("cap") is not None:                       # ExG+ fix (a): clearly green is always leaf
@@ -94,7 +94,7 @@ def convex_hulls(mask: np.ndarray, min_area: int) -> np.ndarray:
     contours, _ = cv2.findContours(to_u8(mask), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for c in contours:
         if cv2.contourArea(c) >= min_area:
-            cv2.fillPoly(out, [cv2.convexHull(c)], 255)
+            cv2.fillPoly(out, [cv2.convexHull(c)], (255,))
     return out
 
 
@@ -152,7 +152,7 @@ def grabcut_refine(img: np.ndarray, init_mask: np.ndarray, iters: int = 4,
         gc[init > 0] = cv2.GC_FGD
     bgd, fgd = np.zeros((1, 65), np.float64), np.zeros((1, 65), np.float64)
     try:
-        cv2.grabCut(img, gc, None, bgd, fgd, iters, cv2.GC_INIT_WITH_MASK)
+        cv2.grabCut(img, gc, (0, 0, 0, 0), bgd, fgd, iters, cv2.GC_INIT_WITH_MASK)   # rect unused in mask mode
     except cv2.error:
         return init  # e.g. degenerate GMM when (almost) the whole image is one class
     return to_u8((gc == cv2.GC_FGD) | (gc == cv2.GC_PR_FGD))

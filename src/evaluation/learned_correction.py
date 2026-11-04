@@ -76,22 +76,23 @@ def main():
 
     # hyper-parameters by 5-fold CV on validation (MAE objective)
     grid = list(itertools.product([2, 3, 4], [100, 300], [0.05]))
-    best_r, best_c = None, None
+    # each candidate: (CV MAE, depth, n_estimators, learning_rate); the lowest CV MAE wins
+    reg_scores = []
     for depth, n, lr in grid:
         mk = lambda: XGBRegressor(max_depth=depth, n_estimators=n, learning_rate=lr, subsample=0.8, colsample_bytree=0.8,
                                   objective="reg:absoluteerror", random_state=0, n_jobs=4)
-        mae = np.mean(np.abs(np.clip(cv_predict(mk, Xv, yv), 0, 100) - yv))
-        if best_r is None or mae < best_r[0]:
-            best_r = (mae, depth, n, lr)
+        reg_scores.append((float(np.mean(np.abs(np.clip(cv_predict(mk, Xv, yv), 0, 100) - yv))), depth, n, lr))
+    best_r = min(reg_scores)
     # spot-vs-zone target: which measurement is closer to the annotation
-    zbetter = (np.abs(v.f_pct_zone10 - yv) < np.abs(v.f_pct_final - yv)).astype(int).to_numpy()
+    zone_v, spot_v = v.f_pct_zone10.to_numpy(float), v.f_pct_final.to_numpy(float)
+    zbetter = (np.abs(zone_v - yv) < np.abs(spot_v - yv)).astype(int)
+    clf_scores = []
     for depth, n, lr in grid:
         mk = lambda: XGBClassifier(max_depth=depth, n_estimators=n, learning_rate=lr, subsample=0.8, colsample_bytree=0.8,
                                    random_state=0, n_jobs=4)
         pz = cv_predict(mk, Xv, zbetter) > 0.5
-        mae = np.mean(np.abs(np.where(pz, v.f_pct_zone10, v.f_pct_final) - yv))
-        if best_c is None or mae < best_c[0]:
-            best_c = (mae, depth, n, lr)
+        clf_scores.append((float(np.mean(np.abs(np.where(pz, zone_v, spot_v) - yv))), depth, n, lr))
+    best_c = min(clf_scores)
     print(f"CV on val: regressor MAE {best_r[0]:.2f} (depth={best_r[1]}, n={best_r[2]}); "
           f"spot/zone switch MAE {best_c[0]:.2f} (depth={best_c[1]}, n={best_c[2]})")
 
@@ -99,12 +100,14 @@ def main():
                        colsample_bytree=0.8, objective="reg:absoluteerror", random_state=0, n_jobs=4).fit(Xv, yv)
     clf = XGBClassifier(max_depth=best_c[1], n_estimators=best_c[2], learning_rate=best_c[3], subsample=0.8,
                         colsample_bytree=0.8, random_state=0, n_jobs=4).fit(Xv, zbetter)
-    med = float(np.median(yv))
+    # trivial baseline: median infected % of the DISEASED validation images (16 %); including healthy
+    # leaves (0 %) would lower it to ~12 % and give a weaker baseline, so we use the stronger one
+    med = float(v.loc[v.source == "plantseg", "gt_pct"].median())
     preds = {
         "A classical (no learning)": t.f_pct_final.to_numpy(float),
         "B constant (val median)": np.full(len(t), med),
         "C xgb regression": np.clip(reg.predict(Xt), 0, 100),
-        "D xgb spot/zone switch": np.where(clf.predict(Xt) == 1, t.f_pct_zone10, t.f_pct_final).astype(float),
+        "D xgb spot/zone switch": np.where(clf.predict(Xt) == 1, t.f_pct_zone10.to_numpy(float), t.f_pct_final.to_numpy(float)),
     }
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -112,11 +115,11 @@ def main():
                          ("diseased only", (t.source == "plantseg").to_numpy()),
                          ("healthy only", (t.source != "plantseg").to_numpy())]:
         for name, p in preds.items():
-            rows.append({"subset": subset, "method": name, **metrics(p[mask], yt[mask], t.pred_group[mask])})
+            rows.append({"subset": subset, "method": name, **metrics(p[mask], yt[mask], t.pred_group.to_numpy()[mask])})
     res = pd.DataFrame(rows)
     print(res.round(3).to_string(index=False))
     res.to_csv(out / "learned_correction_test.csv", index=False)
-    imp = pd.Series(reg.feature_importances_, index=cols).sort_values(ascending=False)
+    imp = pd.Series(dict(zip(cols, reg.feature_importances_.tolist()))).sort_values(ascending=False)
     print("\nregressor feature importance (top 10):\n" + imp.head(10).round(3).to_string())
     imp.to_csv(out / "feature_importance.csv")
     reg.save_model(out / "xgb_regressor.json"); clf.save_model(out / "xgb_spot_zone.json")

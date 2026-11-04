@@ -5,11 +5,13 @@ photo, tells you **which plant and disease** it is and **how severe** the infect
 the step-by-step image-processing evidence behind that number.
 
 - **Stage A (deep learning, "what is it?"):** an ensemble of EfficientNetV2-S and ConvNeXt-Tiny,
-  trained on AWS SageMaker GPUs, classifies 125 plant-disease classes across 34 host plants.
+  trained on cloud NVIDIA T4 GPUs, classifies 125 plant-disease classes across 34 host plants.
 - **Stage B (classical image processing, "how bad is it?"):** an OpenCV / NumPy / scikit-image
   pipeline segments the leaf, detects lesions, cleans them with morphology and measures the
   infected % of leaf area, using **disease-specific methods and parameters chosen by Stage A**.
-- **Stage C (severity):** infected % → Healthy / Mild / Moderate / Severe.
+- **Stage C (severity):** infected % → Healthy / Mild / Moderate / Severe, plus a small learned
+  correction (XGBoost on image-processing measurements) that maps our measurement to the experts'
+  annotation convention.
 - **Stage D (validation):** the classical pipeline is measured pixel-by-pixel against the
   **expert lesion masks of PlantSeg**, something most leaf-disease projects cannot do.
 
@@ -49,53 +51,57 @@ learning at all**, which is why it is explainable step by step and costs ~0.1 s 
 
 On **1,644 held-out in-the-wild test images** (PlantSeg test split + PlantDoc healthy leaves):
 
-- The classifier ensemble names the exact plant + disease (125 classes) **78.7 %** of the time
-  (top-5 **96.4 %**, macro-F1 **0.728**) and the **symptom group 94 %** of the time.
-- The classical pipeline estimates infected leaf area with a **mean absolute error of 19.2 percentage
-  points** (median 12.9) against expert masks, grades severity **within one class for 82.6 %** of
-  diseased leaves, and keeps healthy leaves at **4.3 % false-positive area** (87.8 % graded *Healthy*).
-- **The CNN measurably improves the image processing:** steering the pipeline with the predicted
-  symptom group cuts severity error from **25.9 → 19.2 pp (−26 %)**, raises label agreement
-  37.3 % → 41.9 %, and cuts healthy-leaf false positives **20.8 % → 4.3 %**. With the real classifier
-  it matches the upper bound obtained with the *true* disease (19.3 pp).
-- **Round 2 (test split used a second time, clearly labelled, §10.6):** detector voting raised lesion Dice
-  to **0.356**, and a **learned severity correction** (XGBoost on image-processing features, trained on
-  validation only) cut the severity error to **15.2 pp** (rank correlation 0.27 → 0.40, within one grade
-  93.4 %). It is the only estimate that beats the trivial "always predict 16 %" baseline (17.3 pp), which
-  we report openly: pure colour measurement (19.2–20.2 pp) does not beat it on MAE alone.
-- Everything was tuned on validation; data leakage (339 duplicate photos)
-  was removed, and the dataset's own problems (label noise, broken masks, region- vs spot-level
-  annotation) are measured and documented.
-- Inference runs on a laptop CPU (Apple M1, 8 GB): ~1.2 s and ~1.4 GB RAM per image for both CNNs,
-  the full pipeline and Grad-CAM, served by a FastAPI + React demo.
+- **Classifier:** the ensemble names the exact plant + disease (125 classes) **78.7 %** of the time
+  (top-5 **96.4 %**, macro-F1 **0.728**) and the **symptom group 94.6 %** of the time; its confidence is
+  calibrated (expected calibration error 0.156 → 0.031).
+- **Lesion segmentation (classical, no training on masks):** Dice **0.356** / IoU **0.247** against the
+  expert masks, between DeepLabv3 and DeepLabv3+ trained on the same data (§10.8).
+- **Severity:** the final estimate is off by **15.2 percentage points** on average (median 10.6), grades
+  severity **within one class for 93.4 %** of diseased leaves and keeps healthy leaves at **4.0 %**
+  false-positive area. It is the only variant that beats the trivial "always predict 16 %" baseline
+  (16.9 pp); the raw colour measurement alone (20.2 pp) does not, which we report openly (§10.6).
+- **The CNN measurably improves the image processing:** steering the pipeline with the predicted symptom
+  group cuts the measured severity error from **25.9 → 20.2 pp** and healthy-leaf false positives from
+  **20.8 % → 4.3 %**; with the real classifier it matches the result obtained with the *true* disease
+  (20.1 pp).
+- **Method:** everything was chosen on the validation split; the test split was evaluated in two
+  clearly labelled rounds (round 1, then round 2 with detector voting + the learned correction). Data
+  leakage (339 duplicate photos) was removed, and the dataset's own problems (label noise, broken masks,
+  region- vs spot-level annotation) are measured and documented.
+- **Cost:** the classical pipeline takes ~0.1 s per image on a laptop CPU; the whole demo (two CNNs,
+  Grad-CAM, the standard-pipeline comparison, the learned estimate) takes ~1–3 s and ~1.2 GB RAM.
 
 ---
 
 ## 2. Results at a glance
 
 All numbers are on the **held-out test split** (official PlantSeg test split + PlantDoc healthy test
-images), which was used **once**, after every choice had been made on the validation split.
+images). Every choice was made on the validation split. The test split was evaluated in **two rounds**:
+round 1 (the first complete system) and round 2 (detector voting + learned severity correction, §10.6);
+both are shown so nothing is hidden.
 
-| Component | Metric | Test result |
-|---|---|---|
-| **Classifier** (ensemble, 125 classes) | top-1 / top-5 accuracy | **78.7 % / 96.4 %** |
-| | macro-F1 | **0.728** |
-| | plant accuracy (34 plants) / symptom-group accuracy (6 groups) | 88.5 % / 94.6 % |
-| **Lesion segmentation** (vs PlantSeg masks, 1,554 diseased images) | Dice / IoU | **0.334 / 0.234** |
-| | pixel precision / recall | 0.413 / 0.429 |
-| **Severity** (infected % of leaf) | mean / median absolute error | **19.2 / 12.9 pp** |
-| | bias (predicted − true) | −0.9 pp |
-| | severity-label agreement / within one class | 41.9 % / **82.6 %** |
-| | image-level MAE (independent of our leaf mask) | 16.8 pp |
-| **Healthy leaves** (90 PlantDoc test images) | mean false-positive area / graded *Healthy* | **4.3 % / 87.8 %** |
-| **Trivial baseline** | MAE of predicting the validation median (16 %) for every image | 16.9 pp (grade agreement 29.3 %) |
-| **Round 2** (test used a 2nd time) | lesion Dice / IoU / recall with detector voting | **0.356 / 0.247 / 0.505** |
-| | severity MAE with the learned correction (XGBoost on IP features) | **15.2 pp** (rank corr. 0.40, within one grade 93.4 %) |
-| | classifier calibration error (ECE), before → after temperature scaling | 0.156 → **0.031** |
-| **Effect of the CNN on the pipeline** | severity MAE, generic → CNN-driven | **25.9 → 19.2 pp** |
-| | healthy false positives, generic → CNN-driven | **20.8 % → 4.3 %** |
+| Component | Metric | Round 1 | **Final (round 2)** |
+|---|---|---|---|
+| **Classifier** (ensemble, 125 classes) | top-1 / top-5 accuracy | 78.7 % / 96.4 % | **78.7 % / 96.4 %** |
+| | macro-F1 | 0.728 | **0.728** |
+| | plant accuracy (34) / symptom-group accuracy (6) | 88.5 % / 94.6 % | **88.5 % / 94.6 %** |
+| | calibration error (ECE, lower = better) | 0.156 | **0.031** (temperature scaling) |
+| **Lesion segmentation** (1,554 diseased images) | Dice / IoU (higher = better) | 0.334 / 0.234 | **0.356 / 0.247** |
+| | pixel precision / recall | 0.413 / 0.429 | 0.391 / **0.505** |
+| **Severity** (infected % of leaf) | mean / median absolute error (lower = better) | 19.2 / 12.9 pp (measured) | **15.2 / 10.6 pp** (learned estimate) |
+| | grade exactly right / within one grade | 41.9 % / 82.6 % | **42.3 % / 93.4 %** |
+| | rank correlation with the experts (Spearman) | 0.26 | **0.40** |
+| **Healthy leaves** (90 images) | mean false-positive area / graded *Healthy* | 4.3 % / 87.8 % | 4.0 % / 84.4 % |
+| **Trivial baseline** | always predict 16 % (validation median) | 16.9 pp, grade 29.3 % | 16.9 pp, grade 29.3 % |
+| **Effect of the CNN** | measured severity MAE, generic profile → CNN-driven | 25.9 → 19.2 pp | 25.9 → 20.2 pp |
+| | healthy false positives, generic → CNN-driven | 20.8 % → 4.3 % | 20.8 % → 4.3 % |
 
 ![severity ablation](reports/figures/severity_ablation.png)
+
+*Test split, round 2 (1,554 diseased images). Left: severity error, lowest first; the final system
+(CNN-driven pipeline + learned correction) is the only one below the trivial constant baseline. Right:
+lesion-mask overlap with the expert annotation (the learned correction and the constant output a
+percentage, not a mask, so they have no Dice).*
 
 ---
 
@@ -114,7 +120,7 @@ the disease-aware pipeline on the validation split (843 diseased + 114 healthy i
 | **test (round 1)** | **first evaluation of the test split** | **19.2** | **41.9 %** | **0.33** | **4.3** |
 | v6 | + necrotic **detector voting** (HSV ∩ ΔE, chosen on full val); temperature scaling | 17.1 (necrotic) | – | 0.326 (necrotic) | – |
 | v7 | + **learned severity correction** (XGBoost, 33 image-processing features, 5-fold CV on val) | 12.8 (CV) | – | – | – |
-| **test (round 2)** | **second use of the test split**: measured lesions / learned estimate | 20.2 / **15.2** | 41.2 % / **42.3 %** | **0.356** | 4.3 / 4.0 |
+| **test (round 2)** | **second use of the test split**: measured lesions / learned estimate | 20.2 / **15.2** | 39.6 % / **42.3 %** | **0.356** | 4.3 / 4.0 |
 
 | # | Classifier | Test top-1 | Test top-5 | Test macro-F1 | Plant acc. |
 |---|---|---|---|---|---|
@@ -142,8 +148,8 @@ flowchart TD
     subgraph A["Stage A: deep learning (what is it?)"]
         CNN1["EfficientNetV2-S @384<br/>(ONNX, CPU)"]
         CNN2["ConvNeXt-Tiny @384<br/>(ONNX, CPU)"]
-        ENS["average probabilities<br/>125 diseases + 34 plants"]
-        GRP["sum per symptom group<br/>necrotic / chlorosis / rust /<br/>powdery / healthy"]
+        ENS["average probabilities<br/>(temperature-calibrated)<br/>125 diseases + 34 plants"]
+        GRP["symptom group of the top prediction<br/>necrotic / chlorosis / rust /<br/>powdery / healthy"]
         CAM["Grad-CAM heat-map"]
         CNN1 --> ENS
         CNN2 --> ENS
@@ -154,7 +160,7 @@ flowchart TD
     subgraph B["Stage B: classical image processing (how much?)"]
         PRE["1 preprocess<br/>resize · median filter · CLAHE on L of Lab"]
         LEAF["2 leaf mask: ExG+<br/>ExG + Otsu (capped) ∪ symptom colours<br/>near green ∩ convex hull · morphology · fill holes"]
-        LES["3 lesion detection (per group)<br/>Lab a* / Lab b* / HSV / k-means in Lab"]
+        LES["3 lesion detection (per group)<br/>vote HSV ∩ ΔE (necrotic) · Lab b* (chlorosis)<br/>HSV (rust) · k-means in Lab (powdery)"]
         POST["4 post-processing<br/>opening · closing · hole fill · min area<br/>(rust: closing into affected zone)"]
         MEAS["5 measurements<br/>connected components · spot count<br/>infected % = lesion px / leaf px"]
         PRE --> LEAF --> LES --> POST --> MEAS
@@ -166,16 +172,18 @@ flowchart TD
     GRP -- "low confidence: disease flagged<br/>uncertain + top-3 shown" --> OUT
 
     subgraph C["Stage C: severity"]
-        SEV["infected % → Healthy / Mild / Moderate / Severe<br/>(healthy prediction: pipeline must find ≥ 10 % to overturn)"]
+        LC["learned correction (XGBoost)<br/>33 image-processing measurements →<br/>expert-annotated infected %"]
+        SEV["% → Healthy / Mild / Moderate / Severe<br/>(healthy prediction: pipeline must find ≥ 10 % to overturn)"]
     end
+    MEAS --> LC --> SEV
     MEAS --> SEV
     GRP --> SEV
 
-    SEV --> OUT[/"plant + disease (top-3) · severity · infected % · spot count<br/>overlay · step strip · Grad-CAM"/]
+    SEV --> OUT[/"plant + disease (top-3) · severity · measured % + learned estimate · spot count<br/>overlay · step strip · Grad-CAM · standard-vs-ours comparison"/]
     CAM --> OUT
 
     subgraph D["Stage D: validation against PlantSeg expert masks"]
-        EV["IoU · Dice · precision · recall per method & group<br/>severity MAE · label agreement · ablations"]
+        EV["IoU · Dice · precision · recall per method & group<br/>severity MAE · grade agreement · ablations · trivial baseline"]
     end
     MEAS -.-> EV
 ```
@@ -226,8 +234,9 @@ and additionally report image-level ratios that do not depend on our leaf mask a
 | Imbalance | `WeightedRandomSampler`, weight ∝ 1 / count^0.5 | full inverse frequency would repeat a 3-image class ~100× per epoch |
 | Augmentation | random resized crop, flips, ±20° rotation, brightness/contrast/saturation jitter, **no hue jitter** | hue shifts would turn brown lesions green, i.e. change the label |
 | Selection | early stopping on **validation macro-F1** | accuracy hides rare classes |
-| Compute | SageMaker `ml.g4dn.xlarge` / `2xlarge` (T4), managed spot with S3 checkpoints, ~35–75 s/epoch | |
-| Deployment | ONNX Runtime on CPU (82 ms/image per model on an M1) | |
+| Compute | cloud NVIDIA T4 (16 GB), ~35–75 s/epoch; a checkpoint every epoch so interrupted runs resume | |
+| Calibration | temperature scaling fitted on validation (T = 0.70): ECE 0.156 → 0.031 | makes the "uncertain" flag trustworthy |
+| Deployment | ONNX Runtime on CPU: ~0.6 s for both models on an Apple M1 | no GPU needed |
 
 The final classifier (ensemble, chosen on validation) puts the **top-1 prediction in the right symptom
 group for 94.6 % of test images** even though the exact disease is right for 78.7 %: most errors are the right disease on
@@ -248,13 +257,13 @@ image (`run_pipeline(...)["steps"]`, the demo's step strip, `reports/figures/pip
 |---|---|---|
 | 1. Preprocess | resize (long side 768, `INTER_AREA`), median filter 5×5, **CLAHE on the L channel of Lab** | Lab separates lightness from colour, so contrast improves without shifting lesion hues |
 | 2. Leaf mask | **ExG+** (ours): Excess Green `2g − r − b` on chromatic coordinates + Otsu, with a cap so clearly green pixels are always leaf; plus symptom-coloured pixels (yellow/brown/white/dark) that are near green tissue **and inside the convex hull** of a green region; closing, hole filling, keep largest components | plain ExG+Otsu splits full-frame leaves in two and cuts off diseased margins (kept only 23 % of true lesion pixels); ExG+ keeps 94 % |
-| 3. Lesions (per symptom group) | necrotic: **Lab a\*** > max(Otsu, floor); chlorosis: **Lab b\***; powdery: **k-means (k=4) in Lab**, whitest clusters; rust: **HSV** orange band; generic: HSV "not healthy green" | each symptom has a different colour signature; the method per group was chosen by grid search on validation |
+| 3. Lesions (per symptom group) | necrotic: **vote** = HSV "not healthy green" ∩ ΔE-from-the-leaf's-own-healthy-colour (+ hysteresis); chlorosis: **Lab b\*** > max(Otsu, floor); powdery: **k-means (k=4) in Lab**, whitest clusters; rust: **HSV** orange band; generic: HSV "not healthy green" | each symptom has a different colour signature; the method per group was chosen on validation (grid search, then the full validation split) |
 | 4. Post-process | opening 3×3, closing 5×5, hole filling (flood fill from the border), area filter, restrict to leaf; **rust: closing with a disk ∝ √(leaf area) into an "affected zone"** | removes speckle, merges fragments; rust pustules are rated (and annotated) as one infected area |
 | 5. Measure | connected components (8-connectivity): spot count, spot areas; infected % = lesion px / leaf px | |
 
-Also implemented and compared: HSV leaf thresholding, **GrabCut** seeded from the ExG mask, and an
-adaptive **ΔE-from-the-leaf's-own-healthy-colour + hysteresis** lesion detector (Canny-style strong/weak
-thresholds).
+Also implemented and compared: HSV leaf thresholding, **GrabCut** seeded from the ExG mask, Lab a\*
+thresholding, and the **ΔE + hysteresis** detector on its own (Canny-style strong/weak thresholds: very
+high recall, too many false positives alone, useful inside a vote).
 
 `python -m src.evaluation.figures` writes `reports/figures/pipeline_strips.jpg`: one **typical** image
 per symptom group (the image whose Dice is closest to its group's median, not hand-picked) through every
@@ -277,6 +286,9 @@ as Horsfall–Barratt; they are not an agronomic standard.
   overturn it (median false positive on healthy validation leaves is 0.7 %, so small detections are
   glare, veins or background).
 - **Non-leaf diseases** (fruit/heads/stems) trigger a warning that leaf-area severity is approximate.
+- **Learned estimate:** next to the measured %, the system reports a learned estimate of the
+  expert-annotated affected area (§10.6); it is the more accurate severity number, while the measured %
+  is the one you can trace to the step images.
 
 ---
 
@@ -287,11 +299,13 @@ as Horsfall–Barratt; they are not an agronomic standard.
   predicted % = |P| / D, true % = |G| / D. Because both use the same denominator, the severity error comes
   only from lesion detection, not from leaf segmentation.
 - **Image-level ratio** |P| / image vs |G| / image (independent of our leaf mask).
-- **Protocol:** method selection, parameter search, uncertainty rule and ensemble were all decided on the
-  **validation** split (a 435-image local dev subset for fast iteration, then all 957 validation images);
-  the **test** split was evaluated once.
-- **Ablations:** each lesion method alone, generic profile (no CNN), disease-aware with the true disease
-  (upper bound), CNN-driven (top-1 rule / group rule / no fallback), with vs without CLAHE.
+- **Protocol:** method selection, parameter search, detector voting, uncertainty rule, ensemble,
+  calibration and the learned correction were all decided on the **validation** split (a 435-image dev
+  subset for fast iteration, then all 957 validation images). The **test** split was evaluated in two
+  labelled rounds (§10.6).
+- **Ablations:** each lesion method alone (incl. votes), generic profile (no CNN), disease-aware with the
+  true disease (upper bound), CNN-driven (top-1 / group / no fallback), with vs without CLAHE, and a
+  trivial constant baseline.
 
 ---
 
@@ -308,44 +322,59 @@ as Horsfall–Barratt; they are not an agronomic standard.
 
 Validation also tested flip test-time augmentation and plant-head re-weighting
 (`score = p(disease) · p(plant)^α`); neither improved validation macro-F1, so neither is used.
+Temperature scaling (fitted on validation) changes only the confidence values, not the predictions.
 
-### 10.2 Lesion methods per symptom group (test, Dice)
+![plant confusion](reports/figures/confusion_plant.png)
 
-| Symptom group | images | HSV | Lab | k-means | ΔE + hysteresis | used |
-|---|---|---|---|---|---|---|
-| necrotic | 950 | **0.337** | 0.294 | 0.161 | 0.309 | Lab a\* (lowest severity error) |
-| chlorosis | 256 | 0.223 | **0.376** | 0.163 | 0.362 | Lab b\* |
-| rust | 209 | **0.395** | 0.259 | 0.230 | 0.392 | HSV + affected zone |
-| powdery | 135 | 0.353 | 0.381 | **0.480** | 0.450 | k-means (whitest cluster) |
+### 10.2 Lesion methods per symptom group (test, Dice, higher = better)
 
-Choices were made on validation with the objective *Dice − MAE/100*; for necrotic lesions HSV overlaps
-slightly better but Lab gives lower severity error, which is the deliverable.
+| Symptom group | images | HSV | Lab | k-means | ΔE + hysteresis | vote HSV ∩ ΔE | vote Lab ∩ ΔE | used (chosen on validation) |
+|---|---|---|---|---|---|---|---|---|
+| necrotic | 950 | **0.337** | 0.294 | 0.161 | 0.309 | 0.331 | 0.284 | vote HSV ∩ ΔE |
+| chlorosis | 256 | 0.223 | **0.376** | 0.163 | 0.370 | 0.210 | 0.352 | Lab b\* |
+| rust | 209 | **0.395** | 0.259 | 0.230 | 0.390 | 0.393 | 0.258 | HSV + affected zone |
+| powdery | 135 | 0.353 | 0.381 | **0.480** | 0.455 | 0.348 | 0.376 | k-means (whitest cluster) |
+
+Choices were made on validation with the objective *Dice − MAE/100* (1 pp of severity error costs as much
+as 0.01 Dice). On test, plain HSV overlaps marginally better for necrotic lesions (0.337 vs 0.331); the
+vote was preferred on validation because it also lowers severity error and false positives.
 
 ### 10.3 Severity by group and by true severity (test, final system)
 
-| Group | n | MAE (pp) | bias | Dice | | True infected % | n | MAE (pp) | bias |
+MAE in percentage points (lower = better); "measured" is the classical lesion %, "learned" the final
+estimate (§10.6).
+
+| Group | n | measured MAE | learned MAE | Dice | | True infected % | n | measured MAE | learned MAE |
 |---|---|---|---|---|---|---|---|---|---|
-| necrotic | 950 | **16.8** | −4.1 | 0.30 | | 0–5 % | 262 | 14.4 | +13.9 |
-| chlorosis | 256 | 20.6 | +6.1 | 0.35 | | 5–15 % | 464 | **13.1** | +9.8 |
-| rust | 209 | 21.3 | −5.1 | 0.39 | | 15–30 % | 344 | 15.2 | +4.7 |
-| powdery | 135 | 30.8 | +13.8 | **0.47** | | 30–50 % | 267 | 20.3 | −9.5 |
-| | | | | | | > 50 % | 217 | 43.2 | −40.3 |
+| necrotic | 950 | 18.2 | **14.0** | 0.33 | | 0–5 % | 262 | 18.9 | **12.1** |
+| chlorosis | 256 | 20.6 | **15.0** | 0.36 | | 5–15 % | 464 | 16.2 | **8.0** |
+| rust | 209 | 21.9 | **17.3** | 0.39 | | 15–30 % | 344 | 15.8 | **8.7** |
+| powdery | 135 | 30.9 | **21.5** | **0.47** | | 30–50 % | 267 | **17.8** | 17.9 |
+| | | | | | | > 50 % | 217 | **40.6** | 41.6 |
 
-Leaf diseases: MAE 19.7 pp (n = 1,307); non-leaf diseases (fruit/heads/stems): 17.3 pp (n = 247).
+The learned correction halves the error for lightly and moderately infected leaves (≤ 30 %), where pure
+measurement over-detects, but does not fix very heavy infections (> 50 %), where the annotations outline
+whole regions. Leaf diseases: 20.3 → 15.7 pp (n = 1,307); non-leaf diseases (fruit/heads/stems):
+20.1 → 12.7 pp (n = 247).
 
-Severity confusion (rows = true grade, columns = predicted; test, final system):
+Severity grades of the final estimate (rows = expert grade, columns = predicted; test):
 
-| true \ pred | Healthy | Mild | Moderate | Severe |
+| expert \ predicted | Healthy | Mild | Moderate | Severe |
 |---|---|---|---|---|
-| Healthy (< 1 %) | 6 | 7 | 5 | 11 |
-| Mild | 31 | **195** | 168 | 107 |
-| Moderate | 27 | 89 | **167** | 172 |
-| Severe | 27 | 94 | 165 | **283** |
+| Healthy (< 1 %) | 2 | 9 | 11 | 7 |
+| Mild | 3 | **148** | 305 | 45 |
+| Moderate | 5 | 65 | **278** | 107 |
+| Severe | 1 | 33 | 306 | **229** |
+
+Most disagreements are one grade apart (93.4 % within one grade); the estimate leans towards *Moderate*.
 
 ![predicted vs true severity](reports/figures/severity_scatter.png)
 
-The correlation between predicted and true infected % is only **r = 0.21**: errors are small up to ~30 %
-infection and large above 50 %, where annotations outline whole diseased regions (see §13).
+*Test split, round 2. Left: the measured lesion % alone correlates weakly with the expert annotation
+(r = 0.19; round 1: 0.21): errors are small up to ~30 % infection and large above 50 %, where annotations
+outline whole diseased regions (see §13). Right: the learned correction (§10.6) doubles the correlation
+(r = 0.40) and cuts the error to 15.2 pp, but it still compresses very heavy infections towards the middle
+(cases above ~60 % are under-predicted).*
 
 ### 10.4 Leaf segmentation (no leaf ground truth: share of true lesion pixels inside our leaf mask, test)
 
@@ -356,25 +385,32 @@ infection and large above 50 %, where annotations outline whole diseased regions
 | HSV threshold | 84.2 % | 77.0 % |
 | **ExG+ (ours)** | **93.9 %** | 86.7 % |
 
-### 10.5 Ablations (test)
+### 10.5 Ablations (test, round 2)
 
-| Variant | severity MAE (pp) | agreement | Dice | healthy FP |
+| Variant | severity MAE (pp) ↓ | grade agreement ↑ | Dice ↑ | healthy false positives ↓ |
 |---|---|---|---|---|
-| **CNN-driven, final** | **19.2** | 41.9 % | 0.334 | 4.3 % |
-| disease-aware with the true disease (upper bound) | 19.3 | 41.6 % | 0.337 | 1.6 % |
+| **final: CNN-driven + learned correction** | **15.2** | **42.3 %** | – | 4.0 % |
+| CNN-driven, measured lesions | 20.2 | 39.6 % | 0.356 | 4.3 % |
+| disease-aware with the *true* disease (upper bound for the CNN) | 20.1 | 39.8 % | 0.359 | 1.6 % |
 | generic profile (no CNN) | 25.9 | 37.3 % | 0.321 | 20.8 % |
-| without CLAHE | 19.1 | 41.2 % | 0.338 | 1.6 % |
+| without CLAHE | 19.7 | 39.6 % | 0.359 | 1.6 % |
 | Lab only (one method for every group) | 18.7 | 39.2 % | 0.310 | 1.6 % |
+| constant 16 % (trivial baseline) | 16.9 | 29.3 % | – | – |
+| CNN-driven, fallback to generic if p(top-1) < 0.5 | 21.8 | 39.3 % | 0.348 | 8.3 % |
+| CNN-driven, fallback to generic if p(group) < 0.5 | 20.3 | 39.7 % | 0.354 | 3.7 % |
 
-Honest notes: **CLAHE makes no meaningful difference** (±0.4 pp on val and test, in opposite
-directions). **A single Lab method is competitive on severity error** (18.7 on test, but 17.9 vs 17.4 on
-validation), with lower Dice and label agreement than the disease-aware pipeline; the disease-aware
-pipeline's advantage is mostly in agreement, overlap and above all **healthy-leaf false positives**.
+Honest notes: **CLAHE brings no measurable benefit**: removing it slightly lowered the error in round 2
+on both validation (18.6 → 18.3 pp) and test (20.1 → 19.7 pp), within noise; we keep it because it makes
+the step images easier to read, and report the effect. **A single Lab method has the lowest measured MAE**
+(18.7) but also the lowest Dice and recall; the disease-aware pipeline wins on overlap and above all on
+**healthy-leaf false positives** (generic 20.8 % vs 4.3 %), and the learned correction (15.2) supersedes
+any measured MAE. The "true disease" rows show 1.6 % healthy false positives because a correctly known
+*healthy* label always selects the strict healthy profile.
 
 ### 10.6 Round 2: detector voting, learned severity correction, calibration (test used a second time)
 
-After round 1 we found that **a constant prediction (the validation median, 16 %) has a lower test MAE
-(16.9 pp) than pure colour measurement (19.2 pp)**. The reason is the annotation convention (§13): many
+After round 1 we found that **a constant prediction (the median of the diseased validation images, 16 %)
+has a lower test MAE (16.9 pp) than pure colour measurement (19.2 pp)**. The reason is the annotation convention (§13): many
 masks outline whole diseased regions, so measurement under-estimates heavy and over-estimates light
 infections, and a mid-range constant scores well on MAE while being unable to grade, rank or outline
 anything. Round 2 addresses this; every choice was again made on validation, and the test split was
@@ -393,13 +429,13 @@ colour agree. Chosen on all 957 validation images by the same objective (Dice �
 **Learned severity correction.** An XGBoost regressor maps 33 classical features (infected % from every
 detector, affected-zone % at three scales, spot count / density / largest spot, convex-hull spread of the
 lesions, Lab statistics, GLCM texture, predicted symptom group) to the annotated infected %. It is trained
-**only on validation** (hyper-parameters by 5-fold CV; CV MAE 12.8) and applied once to test.
+**only on validation** (hyper-parameters by 5-fold CV; CV MAE 12.8) and applied to test in round 2.
 CNN confidences are excluded so the demo (calibrated probabilities) sees the same inputs as training.
 
 | Test, diseased leaves (n = 1,554) | MAE | median AE | grade agreement | within one grade | Spearman |
 |---|---|---|---|---|---|
 | A. measured lesion % (no learning) | 19.9 | 15.1 | 41.2 % | 82.0 % | 0.27 |
-| B. constant 16 % (trivial baseline) | 17.3 | 9.7 | 29.3 % | 98.1 %\* | – |
+| B. constant 16 % (trivial baseline) | 16.9 | 11.3 | 29.3 % | 98.1 %\* | – |
 | **C. learned correction (XGBoost)** | **15.2** | 10.6 | **42.3 %** | **93.4 %** | **0.40** |
 | D. learned spot-vs-zone switch | 19.8 | 15.0 | 41.1 % | 82.9 % | 0.27 |
 
@@ -420,7 +456,7 @@ of the time when confident vs 33.7 % when flagged uncertain.
 
 ### 10.7 Demo: standard pipeline vs ours vs expert (unseen test images)
 
-The demo (`bash demo/run_demo.sh`) runs every photo through **our system and the standard textbook pipeline**
+The demo (`bash demo/run_demo.sh`, or `demo\run_demo.ps1` on Windows) runs every photo through **our system and the standard textbook pipeline**
 side by side (ExG + Otsu leaf mask, one fixed HSV "not green" rule; same preprocessing and clean-up, so only
 the methods differ), with a pixel-difference view. Its **example gallery** holds 29 official test-split
 images (`python -m src.data.make_demo_examples`; never used for training, tuning or fitting the correction,
@@ -496,10 +532,12 @@ Most public leaf-disease projects (typically PlantVillage-based) stop at classif
 "infected %" from thresholding without ever checking it against ground truth. This project:
 
 1. **Validates severity against expert pixel masks.** Every severity number has a measured error bar
-   (MAE, Dice, label agreement) on 1,500+ held-out in-the-wild images, not just example screenshots.
+   (MAE, Dice, grade agreement) on 1,500+ held-out in-the-wild images, and is compared with a trivial
+   baseline and with a standard thresholding pipeline, not just example screenshots.
 2. **Uses the CNN to steer the image processing**, not to replace it. The predicted symptom group picks
    the lesion detector, its colour ranges, the measurement (lesion vs affected zone) and the severity
-   scale, and the benefit is measured: CNN-driven vs generic severity error **19.2 vs 25.9 pp** on test, healthy false positives **4.3 % vs 20.8 %**.
+   scale, and the benefit is measured: CNN-driven vs generic measured severity error **20.2 vs 25.9 pp**
+   on test, healthy false positives **4.3 % vs 20.8 %**.
 3. **Is honest about uncertainty.** Low-confidence diagnoses are flagged with the top-3, the fallback
    policy itself was chosen by measurement, a healthy prediction must be overturned by ≥ 10 % detected
    area, and non-leaf diseases carry a warning.
@@ -508,7 +546,8 @@ Most public leaf-disease projects (typically PlantVillage-based) stop at classif
 5. **Treats the data critically:** leakage removal by perceptual hashing, label-noise discovery, mask
    repairs, and an annotation-style analysis (see §13).
 6. **Stays explainable:** every number traces back to a visible step (leaf mask, candidates, cleaned
-   lesions) plus a Grad-CAM heat-map for the CNN; it runs on a laptop CPU in ~1.2 s per image.
+   lesions) plus a Grad-CAM heat-map for the CNN; the classical pipeline takes ~0.1 s per image on a laptop
+   CPU (~1–3 s for the whole demo).
 
 ---
 
@@ -518,11 +557,11 @@ Most public leaf-disease projects (typically PlantVillage-based) stop at classif
 |---|---|---|
 | Learned severity correction on top of measurement | severity MAE 19.9 → 15.2 pp, beats the trivial baseline | a learned layer in an image-processing system; less directly traceable than the measured % (so both are shown) |
 | Detector voting for necrotic lesions | Dice 0.298 → 0.333 (test) | measured-lesion MAE +1.5 pp for that group |
-| Classical lesion segmentation instead of a segmentation network | explainable, no training, tunable per symptom, runs on any CPU | lower pixel accuracy than a trained U-Net/SegFormer would likely reach (Dice ≈ 0.3–0.4) |
+| Classical lesion segmentation instead of a segmentation network | explainable, no training, tunable per symptom, runs on any CPU | lower pixel accuracy than the best trained networks (our IoU 24.7 % vs SegNeXt-L 44.5 %, §10.8) |
 | Per-group methods tuned on validation | measurable gains (Dice 0.26 → 0.34) | more configuration; groups with few images (generic) are tuned on little data |
 | Generous ExG+ leaf mask | keeps 94 % of true lesion pixels inside the leaf | background (soil, litter, a hand, studio backdrops) sometimes enters the leaf |
 | "Affected zone" for rust | matches how rust is annotated/rated (MAE 21.4 → 17.9) | the zone includes healthy tissue between pustules by design |
-| Ensemble of two CNNs | +2.0 pp top-1, +0.023 macro-F1 over the best single model | ~2× inference time (still ~1.2 s/image with the pipeline on CPU), ~1.4 GB RAM |
+| Ensemble of two CNNs | +2.0 pp top-1, +0.023 macro-F1 over the best single model | ~2× inference time (~0.6 s for both on a laptop CPU), ~1.2 GB RAM for the whole demo |
 | Shared-denominator severity | isolates lesion-detection error | does not validate leaf segmentation itself (no leaf ground truth exists) |
 | Fixed severity cut-offs | simple, configurable | assumptions, not agronomic standards |
 
@@ -536,17 +575,20 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 1. **Region-level ground truth (largest effect).** Many PlantSeg masks outline the whole diseased leaf
    or region, including green tissue between spots (bean rust 96 %, coffee leaf rust 82 %, banana
    black leaf streak 100 % of the leaf). Colour methods find the spots, so above 50 % true severity the
-   error is 43 pp with a −40 pp bias. Merging lesions into zones fixes this for rust (MAE 21.4 → 17.9) but
-   over-inflates spot-annotated images in other groups, so it is used for rust only.
+   measured error is 41 pp with a −37 pp bias, and the learned correction does not fix it. Merging lesions
+   into zones helps for rust (MAE 21.4 → 17.9 on validation) but over-inflates spot-annotated images in
+   other groups, so it is used for rust only.
 2. **Background inside the leaf mask.** Studio backdrops, leaf litter, soil, a hand or other plants'
    yellow leaves can enter the generous ExG+ mask and be flagged (powdery mildew's k-means is the most
-   affected: +13.8 pp bias).
-3. **Over-detection on small true lesions.** Below 15 % true infection the bias is +10 to +14 pp: veins,
-   glare and natural yellowing count as lesions.
+   affected: +14.0 pp measured bias).
+3. **Over-detection on small true lesions.** Below 15 % true infection the measured bias is +14 to +19 pp:
+   veins, glare and natural yellowing count as lesions. This is where the learned correction helps most
+   (error 18.9 → 12.1 pp below 5 %, 16.2 → 8.0 pp at 5–15 %).
 4. **Dataset noise.** Posters and document scans, photos with drawn annotations, an apple fruit labelled
    "healthy apple leaf", identical photos under two diseases.
-5. **Non-leaf organs.** Fruit, heads and stems are handled by a leaf pipeline; their error (17.3 pp) is
-   not worse on average, but the measured quantity is less meaningful, hence the demo warning.
+5. **Non-leaf organs.** Fruit, heads and stems are handled by a leaf pipeline; their error (12.7 pp with
+   the learned correction) is not worse on average, but the measured quantity is less meaningful, hence
+   the demo warning.
 
 ---
 
@@ -554,8 +596,8 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 
 - **Annotation-convention mismatch:** many PlantSeg masks outline whole diseased regions, while colour
   methods find individual lesions; this dominates the error above 50 % severity. The learned correction
-  (round 2) reduces but does not remove it, and it is trained on only ~900 validation images; training it
-  on the 5,400 training images is the obvious next step.
+  (round 2) reduces the overall error but not for very heavy infections, and it is trained on only ~900
+  validation images; training it on the 5,400 training images is the obvious next step.
 - **Leaf ground truth is missing:** a hand-labelled leaf mask for ~50 test images would let us validate
   the leaf step directly.
 - **Lab-vs-wild gap and label noise:** some PlantSeg photos are posters, documents or annotated images;
@@ -563,7 +605,7 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 - **Thresholds are assumptions** (severity cut-offs, uncertainty threshold).
 - **Future work:** train a segmentation network on the PlantSeg masks and compare it with the classical
   pipeline under the same protocol; per-plant leaf-colour models; a learned symptom-group detector for
-  non-leaf organs; calibrated confidence (temperature scaling).
+  non-leaf organs; leaf segmentation with a promptable model (e.g. SAM) seeded by the ExG+ mask.
 
 ---
 
@@ -679,14 +721,25 @@ print(res["label"], out["measurements"]["infected_pct"], out["measurements"]["se
        --frozen-epochs 2 --patience 6 --lr-backbone 0.0001 --num-workers 4
    ```
    (Windows: write each command on one line, or replace `\` with PowerShell's backtick `` ` ``.)
-4. **Choose the final classifier on validation and calibrate it:**
-   `python -m src.classifier.ensemble outputs/effv2 outputs/convnext --write-config` then
-   `python -m src.classifier.calibrate`.
-5. **Evaluate the classical pipeline** (CPU, multi-core):
-   `python -m src.evaluation.run_eval --data-root data/processed --split val --predictions <val_predictions.csv> --out outputs/eval/val`
-   (same for `--split test`), then `python -m src.evaluation.select_methods outputs/eval/val/per_image.csv`,
-   `python -m src.evaluation.learned_correction --val outputs/eval/val/per_image.csv --test outputs/eval/test/per_image.csv`
-   and `python -m src.evaluation.figures --eval outputs/eval`.
+4. **Choose the final classifier on validation, export its predictions and calibrate it:**
+   ```bash
+   python -m src.classifier.ensemble outputs/effv2 outputs/convnext --out outputs/ensemble --write-config --write-predictions
+   python -m src.classifier.calibrate
+   ```
+   (the training runs write `best.pt`, `model.onnx`, `label_maps.json` and the validation / test
+   probabilities into `outputs/effv2` and `outputs/convnext`; point `configs/inference.yaml` there, or copy
+   them into `models/`.)
+5. **Evaluate the classical pipeline** (CPU, multi-core), choose the lesion methods, fit the learned
+   correction and redraw the figures:
+   ```bash
+   python -m src.evaluation.run_eval --data-root data/processed --split val --predictions outputs/ensemble/val_predictions.csv --out outputs/eval/val
+   python -m src.evaluation.run_eval --data-root data/processed --split test --predictions outputs/ensemble/test_predictions.csv --out outputs/eval/test
+   python -m src.evaluation.select_methods outputs/eval/val/per_image.csv
+   python -m src.evaluation.learned_correction --val outputs/eval/val/per_image.csv --test outputs/eval/test/per_image.csv --out outputs/learned
+   python -m src.evaluation.figures --eval outputs/eval
+   ```
+   (Windows: same commands; `figures` reads the learned model from `models/learned/`, so copy
+   `outputs/learned/*` there to use a newly fitted one.)
 
 Our own runs used cloud T4 GPUs (~35–75 s per epoch); expect a laptop RTX 3050 to be somewhat slower.
 

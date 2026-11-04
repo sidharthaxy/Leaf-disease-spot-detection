@@ -25,6 +25,7 @@ import subprocess
 import sys
 from multiprocessing import Pool
 from pathlib import Path
+from typing import Any
 
 MAX_SIDE = 768
 SPLIT_MAP = {"Training": "train", "Validation": "val", "Test": "test"}
@@ -36,9 +37,10 @@ PLANTDOC_HEALTHY = {  # PlantDoc folder -> PlantSeg plant name
 
 
 def ensure_deps():
-    try:
-        import numpy, pandas, PIL  # noqa: F401
-    except ImportError:
+    """Install Pillow / NumPy / pandas if this Python lacks them (checked without importing them)."""
+    import importlib.util
+
+    if any(importlib.util.find_spec(m) is None for m in ("numpy", "pandas", "PIL")):
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pillow", "numpy", "pandas"])
 
 
@@ -73,10 +75,10 @@ def process_one(job):
     w, h = img.size  # NOTE: no EXIF rotation - PlantSeg masks were drawn on the raw pixel grid
     s = min(1.0, MAX_SIDE / max(img.size))
     new = (max(1, round(img.size[0] * s)), max(1, round(img.size[1] * s)))
-    small = img.resize(new, Image.LANCZOS) if s < 1 else img
+    small = img.resize(new, Image.Resampling.LANCZOS) if s < 1 else img
     Path(dst_img).parent.mkdir(parents=True, exist_ok=True)
     small.save(dst_img, quality=95)
-    out = {"orig_w": w, "orig_h": h, "dhash": dhash(small)}
+    out: dict[str, Any] = {"orig_w": w, "orig_h": h, "dhash": dhash(small)}
     if src_mask:
         m = np.asarray(Image.open(src_mask))
         out["mask_size_matches"] = bool(m.shape[:2] == (h, w))
@@ -84,7 +86,7 @@ def process_one(job):
         # any non-zero pixel is lesion: one disease per image, and 12 PlantSeg masks carry a
         # neighbouring class value (annotation slip), which an exact match would turn into empty masks
         binm = Image.fromarray(((m > 0) * 255).astype("uint8"))
-        binm = binm.resize(new, Image.NEAREST)
+        binm = binm.resize(new, Image.Resampling.NEAREST)
         Path(dst_mask).parent.mkdir(parents=True, exist_ok=True)
         binm.save(dst_mask)
         out["mask_ratio_resized"] = float((np.asarray(binm) > 0).mean())
@@ -112,15 +114,17 @@ def main():
     meta.columns = [c.strip().replace(" ", "_") for c in meta.columns]  # 'Label file' -> Label_file
     meta = meta.rename(columns={"Index": "class_index"})  # 'Index' clashes with itertuples' row index
     for r in meta.itertuples():
-        split = SPLIT_MAP[r.Split]
-        stem = Path(r.Name).stem
-        src_i = seg / "images" / split / r.Name
-        src_m = seg / "annotations" / split / r.Label_file
+        name, label_file, plant, disease = str(r.Name), str(r.Label_file), str(r.Plant), str(r.Disease)
+        split = SPLIT_MAP[str(r.Split)]
+        stem = Path(name).stem
+        src_i = seg / "images" / split / name
+        src_m = seg / "annotations" / split / label_file
         di, dm = f"images/{split}/{stem}.jpg", f"masks/{split}/{stem}.png"
-        rows.append({"image_path": di, "mask_path": dm, "plant": r.Plant, "disease": r.Disease.lower(),
-                     "label": label_of(r.Plant, r.Disease), "split": split, "source": "plantseg",
-                     "mask_value": int(r.class_index) + 1, "mask_ratio": float(r.Mask_ratio)})
-        jobs.append((str(src_i), str(src_m), str(out / di), str(out / dm), int(r.class_index) + 1))
+        class_index = int(str(r.class_index))
+        rows.append({"image_path": di, "mask_path": dm, "plant": plant, "disease": disease.lower(),
+                     "label": label_of(plant, disease), "split": split, "source": "plantseg",
+                     "mask_value": class_index + 1, "mask_ratio": float(str(r.Mask_ratio))})
+        jobs.append((str(src_i), str(src_m), str(out / di), str(out / dm), class_index + 1))
 
     # ---- PlantDoc healthy (train -> train/val stratified, test -> test) ----
     for folder, plant in PLANTDOC_HEALTHY.items():

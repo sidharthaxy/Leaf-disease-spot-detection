@@ -41,10 +41,10 @@ def fill_holes(mask: np.ndarray) -> np.ndarray:
     We pad by 1 px first so the flood can go around objects that touch the image border.
     """
     m = to_u8(mask)
-    padded = cv2.copyMakeBorder(m, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+    padded = cv2.copyMakeBorder(m, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=(0,))
     flood = padded.copy()
     ff_mask = np.zeros((padded.shape[0] + 2, padded.shape[1] + 2), np.uint8)
-    cv2.floodFill(flood, ff_mask, (0, 0), 255)
+    cv2.floodFill(flood, ff_mask, (0, 0), (255,))
     holes = cv2.bitwise_not(flood)  # pixels the flood never reached
     filled = cv2.bitwise_or(padded, holes)
     return filled[1:-1, 1:-1]

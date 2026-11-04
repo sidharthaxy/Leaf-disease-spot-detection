@@ -65,7 +65,7 @@ def group_confidence(topk: list[tuple[str, float]]) -> tuple[str, float]:
     for label, p in topk:
         g = symptom_group(label)
         acc[g] = acc.get(g, 0.0) + p
-    g = max(acc, key=acc.get)
+    g = max(acc, key=lambda k: acc[k])
     return g, acc[g]
 
 

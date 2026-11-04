@@ -50,3 +50,6 @@ run_all.sh
 Dockerfile
 requirements/aws.txt
 src/evaluation/sm_eval_entry.py
+
+# --- Local editor config ---
+pyrefly.toml

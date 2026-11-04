@@ -24,7 +24,7 @@ from src.imageproc.leaf_seg import segment_leaf
 from src.imageproc.lesion_seg import segment_lesions
 from src.severity.grade import get_profile, symptom_group
 
-BEST = {}
+BEST: dict = {}   # set by init() in each worker process
 
 
 def run(args):
@@ -50,7 +50,7 @@ def main():
     ap.add_argument("--cache", default="outputs/tune_v1/cache")
     ap.add_argument("--best", default="outputs/tune_v1/best.json")
     ap.add_argument("--out", default="outputs/tune_leaf")
-    ap.add_argument("--workers", type=int, default=min(6, os.cpu_count()))
+    ap.add_argument("--workers", type=int, default=min(6, os.cpu_count() or 1))
     a = ap.parse_args()
     best = json.loads(Path(a.best).read_text())
     df = pd.read_csv(Path(a.data_root) / "manifest.csv").fillna("")

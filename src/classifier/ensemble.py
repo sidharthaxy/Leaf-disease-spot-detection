@@ -1,7 +1,7 @@
 """
 Choose the final classifier from saved probabilities (no GPU needed; runs on the Mac in seconds).
 
-    python -m src.classifier.ensemble outputs/<job1>/model outputs/<job2>/model ... --out outputs/ensemble
+    python -m src.classifier.ensemble outputs/effv2 outputs/convnext --out outputs/ensemble --write-config --write-predictions
 
 Options compared on the VALIDATION split, the winner reported once on TEST:
   - single model, plain vs test-time augmentation (TTA: average of image + mirror image)
@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+from typing import Any
 from pathlib import Path
 
 import numpy as np
@@ -53,6 +54,7 @@ def main():
     ap.add_argument("models", nargs="+")
     ap.add_argument("--out", default="outputs/ensemble")
     ap.add_argument("--write-config", action="store_true")
+    ap.add_argument("--write-predictions", action="store_true", help="write {val,test}_predictions.csv for run_eval")
     a = ap.parse_args()
     dirs = [Path(m) for m in a.models]
     maps = json.loads((dirs[0] / "label_maps.json").read_text())
@@ -63,7 +65,7 @@ def main():
     test = [load(d, "test") for d in dirs]
     y_v, yp_v, y_t, yp_t = val[0]["y"], val[0]["yp"], test[0]["y"], test[0]["yp"]
 
-    rows = []
+    rows: list[dict[str, Any]] = []
     for n in range(1, len(dirs) + 1):
         for subset in itertools.combinations(range(len(dirs)), n):
             for tta, alpha in itertools.product([False, True], [0.0, 0.5, 1.0, 2.0]):
@@ -87,6 +89,22 @@ def main():
     for k, v in report["test"].items():
         print(f"  {k:60s} " + "  ".join(f"{m}={x:.4f}" for m, x in v.items()))
     (out / "ensemble_report.json").write_text(json.dumps(report, indent=2, default=str))
+    if a.write_predictions:
+        # per-image predictions of the chosen classifier, consumed by src.evaluation.run_eval --predictions
+        import pandas as pd
+
+        from src.severity.grade import symptom_group
+
+        groups = [symptom_group(l) for l in maps["labels"]]
+        G = sorted(set(groups)); gi = np.array([G.index(g) for g in groups])
+        for split, runs in (("val", val), ("test", test)):
+            lp, _ = combine([runs[i] for i in best["subset"]], best["tta"], best["alpha"], l2p)
+            gp = np.stack([lp[:, gi == k].sum(1) for k in range(len(G))], 1)
+            pd.DataFrame({"image_path": runs[0]["image_path"], "label": [maps["labels"][i] for i in runs[0]["y"]],
+                          "pred_label": [maps["labels"][i] for i in lp.argmax(1)], "confidence": lp.max(1),
+                          "pred_group": [G[i] for i in gp.argmax(1)], "group_confidence": gp.max(1)}
+                         ).to_csv(out / f"{split}_predictions.csv", index=False)
+        print(f"wrote {out}/val_predictions.csv and test_predictions.csv")
     if a.write_config:
         cfg = {"model_dirs": [str(dirs[i].relative_to(ROOT)) if dirs[i].is_absolute() else str(dirs[i]) for i in best["subset"]],
                "tta": bool(best["tta"]), "plant_alpha": float(best["alpha"])}

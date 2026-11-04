@@ -20,11 +20,11 @@ def synthetic_leaf(lesions=((150, 140, 22), (220, 200, 15), (260, 130, 18)), see
     img = np.zeros((h, w, 3), np.uint8)
     img[:] = (70, 95, 120)                                     # brownish-grey soil (BGR)
     leaf = np.zeros((h, w), np.uint8)
-    cv2.ellipse(leaf, (200, 150), (150, 90), 15, 0, 360, 255, -1)
+    cv2.ellipse(leaf, (200, 150), (150, 90), 15, 0, 360, (255,), -1)
     img[leaf > 0] = (45, 150, 60)                               # green leaf
     les = np.zeros((h, w), np.uint8)
     for x, y, r in lesions:
-        cv2.circle(les, (x, y), r, 255, -1)
+        cv2.circle(les, (x, y), r, (255,), -1)
     les &= leaf
     img[les > 0] = (35, 70, 120)                                # brown necrosis
     noise = rng.normal(0, 6, img.shape)

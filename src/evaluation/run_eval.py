@@ -33,8 +33,8 @@ from src.imageproc.lesion_seg import segment_lesions
 from src.imageproc.preprocess import preprocess, resize_mask_like
 from src.severity.grade import get_profile, load_yaml, severity_label, symptom_group
 
-ROOT = None
-PRED = {}
+ROOT: Path = Path(".")      # set by _init() in each worker process
+PRED: dict = {}
 
 
 def eval_one(row: dict) -> list[dict]:

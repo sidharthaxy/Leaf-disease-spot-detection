@@ -88,7 +88,7 @@ def b64(img: np.ndarray, max_side: int = 900) -> str:
     if img.ndim == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])
-    return "data:image/jpeg;base64," + base64.b64encode(buf).decode()
+    return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
 
 
 def diff_image(base: np.ndarray, ours: np.ndarray, standard: np.ndarray, gt: np.ndarray | None = None) -> np.ndarray:
@@ -208,8 +208,8 @@ def examples():
     df = _examples()
     out = []
     for r in df.itertuples():
-        img = cv2.imread(str(EXAMPLES / r.image_path))
-        out.append({"id": int(r.example_id), "label": r.label, "plant": r.plant, "disease": r.disease,
+        img = cv2.imread(str(EXAMPLES / str(r.image_path)))
+        out.append({"id": int(str(r.example_id)), "label": str(r.label), "plant": str(r.plant), "disease": str(r.disease),
                     "has_mask": bool(r.mask_path), "thumb": b64(img, max_side=220)})
     return {"note": "Official TEST-split images: never used to train the classifier, tune the pipeline or "
                     "fit the learned correction.", "examples": out}

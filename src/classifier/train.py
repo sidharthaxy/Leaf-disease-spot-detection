@@ -62,7 +62,7 @@ def parse_args():
 def make_sampler(train_df: pd.DataFrame, power: float):
     counts = train_df.label.value_counts()
     w = train_df.label.map(lambda l: 1.0 / counts[l] ** power).to_numpy()
-    return WeightedRandomSampler(torch.as_tensor(w, dtype=torch.double), num_samples=len(w), replacement=True)
+    return WeightedRandomSampler(w.astype(float).tolist(), num_samples=len(w), replacement=True)
 
 
 def cosine_with_warmup(step, total, warmup):
@@ -244,7 +244,9 @@ def main():
     if len(te):
         dl_te = DataLoader(LeafDataset(te, root, maps, eval_transform(a.img_size)), batch_size=a.batch_size,
                            num_workers=a.num_workers)
-        test, (y, p, yp, pp, probs) = evaluate(model, dl_te, device, use_amp, a.max_steps)
+        test, arrays = evaluate(model, dl_te, device, use_amp, a.max_steps)
+        assert arrays is not None, "test split is non-empty, so evaluate() returns arrays"
+        y, p, yp, pp, probs = arrays
         print("test " + " ".join(f"test_{k}={v:.4f}" if isinstance(v, float) else f"test_{k}={v}" for k, v in test.items()), flush=True)
         save_json({"best_epoch": best["epoch"], "val": best["val"], "test": test}, out_dir / "summary.json")
         pred = te.iloc[: len(y)].reset_index(drop=True)[["image_path", "plant", "label"]].copy()

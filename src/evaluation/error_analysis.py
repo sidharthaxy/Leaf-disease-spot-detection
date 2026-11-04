@@ -24,7 +24,7 @@ from src.imageproc.leaf_seg import segment_leaf
 from src.imageproc.lesion_seg import segment_lesions
 from src.severity.grade import get_profile, load_yaml, symptom_group
 
-CACHE = None
+CACHE: Path = Path("outputs/tune_v1/cache")   # set by _init() in each worker process
 
 
 def _init(cache):
@@ -80,8 +80,8 @@ def main():
     worst = dis.reindex(dis.err.abs().sort_values(ascending=False).index).head(a.worst)
     rows = []
     for r in worst.itertuples():
-        pre, gt, leaf, les, method = masks_for(r.image_path, r.group)
-        rows.append(viz.make_strip([(r.label[:32], pre), (f"GT {r.gt_pct:.0f}%", viz.overlay(pre, leaf, gt)),
+        pre, gt, leaf, les, method = masks_for(str(r.image_path), str(r.group))
+        rows.append(viz.make_strip([(str(r.label)[:32], pre), (f"GT {r.gt_pct:.0f}%", viz.overlay(pre, leaf, gt)),
                                     (f"pred {r.pred_pct:.0f}% ({method})", viz.overlay(pre, leaf, les))], tile_h=170))
     W = max(x.shape[1] for x in rows)
     rows = [np.hstack([x, np.full((x.shape[0], W - x.shape[1], 3), 255, np.uint8)]) for x in rows]

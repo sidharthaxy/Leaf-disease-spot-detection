@@ -21,6 +21,7 @@ import sys
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import Any
 
 PLANTSEG_URL = "https://zenodo.org/records/17719108/files/plantseg.zip?download=1"
 PLANTSEG_MD5 = "9358a66dff88cdd15c4fe009763c40a3"
@@ -30,10 +31,10 @@ IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
 
 def ensure_pillow():
-    """The lightweight sklearn container may not ship Pillow; install it if missing."""
-    try:
-        import PIL  # noqa: F401
-    except ImportError:
+    """Install Pillow / NumPy if this Python lacks them (checked without importing them)."""
+    import importlib.util
+
+    if any(importlib.util.find_spec(m) is None for m in ("PIL", "numpy")):
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pillow", "numpy"])
 
 
@@ -129,7 +130,7 @@ def inspect_images_and_masks(root, n_sample=300, seed=0):
             image_like.append({"path": str(p.relative_to(root)), "error": str(e)})
             continue
         uniq = np.unique(arr)
-        rec = {
+        rec: dict[str, Any] = {
             "path": str(p.relative_to(root)),
             "mode": im.mode,
             "shape": list(arr.shape),
@@ -194,7 +195,7 @@ def main():
     for d in (seg_dir, doc_dir, rep_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    report = {}
+    report: dict[str, Any] = {}
 
     # ---- PlantSeg ----
     zp = work / "plantseg.zip"

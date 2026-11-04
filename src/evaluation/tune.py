@@ -29,7 +29,6 @@ from src.imageproc.lesion_seg import segment_lesions
 from src.imageproc.preprocess import preprocess, resize_mask_like
 from src.severity.grade import get_profile, symptom_group
 
-CACHE = None
 
 
 def build_cache(args):
@@ -90,7 +89,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-root", default="data/dev_val")
     ap.add_argument("--out", default="outputs/tune")
-    ap.add_argument("--workers", type=int, default=min(6, os.cpu_count()))
+    ap.add_argument("--workers", type=int, default=min(6, os.cpu_count() or 1))
     ap.add_argument("--grids", default="v1", choices=["v1", "v2"])
     ap.add_argument("--groups", default="", help="comma list to restrict")
     a = ap.parse_args()

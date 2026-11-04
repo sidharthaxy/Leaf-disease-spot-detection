@@ -45,6 +45,8 @@ hole filling (spots with a lighter centre), minimum-area filter (drop noise blob
 
 from __future__ import annotations
 
+from typing import Any
+
 import cv2
 import numpy as np
 from sklearn.cluster import KMeans
@@ -200,15 +202,16 @@ def segment_lesions(img: np.ndarray, leaf: np.ndarray, method: str, profile: dic
     """Return (final lesion/area mask, raw candidate mask, debug info).
     If the profile sets `zone_frac`, the final mask is the affected zone and info["spots"] keeps the
     individual spots (used for the spot count)."""
-    info = {}
+    info: dict[str, Any] = {}
     if "&" in method:
         # VOTING: a pixel is a lesion candidate only if every listed detector agrees (intersection).
         # Each detector makes different mistakes (Lab: yellow-green veins; HSV: dull green shade;
         # ΔE: lighting changes), so agreement removes many false positives.
-        cand = None
-        for part in method.split("&"):
-            c, _, i = segment_lesions(img, leaf, part, {**profile, "zone_frac": None, "post": {"open_k": 0, "close_k": 0, "fill_holes": False, "min_area_px": 0}})
-            cand = c if cand is None else cv2.bitwise_and(cand, c)
+        raw = {**profile, "zone_frac": None, "post": {"open_k": 0, "close_k": 0, "fill_holes": False, "min_area_px": 0}}
+        parts = method.split("&")
+        cand = segment_lesions(img, leaf, parts[0], raw)[0]
+        for part in parts[1:]:
+            cand = cv2.bitwise_and(cand, segment_lesions(img, leaf, part, raw)[0])
         clean = postprocess_lesions(cand, leaf, profile.get("post"))
         info["spots"] = clean
         if profile.get("zone_frac"):
