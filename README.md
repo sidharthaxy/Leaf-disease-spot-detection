@@ -15,15 +15,17 @@ the step-by-step image-processing evidence behind that number.
 - **Stage D (validation):** the classical pipeline is measured pixel-by-pixel against the
   **expert lesion masks of PlantSeg**, something most leaf-disease projects cannot do.
 
-> **Scope: green leaves only.** The system measures disease as "not healthy green" tissue, and the
-> classifier knows only 125 plant classes. A first check therefore stops any image without green leaf
-> tissue: photos without a plant (hands, walls, tables) **and** leaves that are not green, such as red
-> maple or purple cabbage, which it would otherwise grade as almost fully infected. A green object that is
-> not a plant can still get through. Details: §7 (scope gate) and §14.
+> **Scope.** The disease pipeline is built for **green crop leaves**: it measures disease as "not healthy
+> green" tissue, and its classifier knows 125 crop classes. A **router** CNN in front of it (§11) sends
+> everything else elsewhere: ornamental plants with coloured or variegated leaves (croton, coleus, purple
+> heart, pothos …) go to a **palette branch** that compares the leaf with that species' learned normal
+> colours and never names a disease; other houseplants and non-plant photos, including green objects, are
+> recognised and stopped. Crop photos stay in the unchanged crop pipeline (0.85 % of crop test photos are
+> routed away). Details: §7 (green-tissue gate), §11 (router and palette branch) and §15.
 
 **Quick start (macOS, Linux or Windows):** `git clone`, install the Python requirements, run the demo:
-everything needed (trained weights, calibrated ensemble, learned severity model, 29 example images) is in
-this repository. See [§16](#16-run-it-yourself).
+everything needed (trained weights, calibrated ensemble, learned severity model, router, species palettes,
+example images) is in this repository. See [§17](#17-run-it-yourself).
 
 ---
 
@@ -39,13 +41,14 @@ this repository. See [§16](#16-run-it-yourself).
 8. [Stage C: severity grading](#8-stage-c-severity-grading)
 9. [Stage D: evaluation methodology](#9-stage-d-evaluation-methodology)
 10. [Detailed results](#10-detailed-results)
-11. [What makes this approach different](#11-what-makes-this-approach-different)
-12. [Trade-offs](#12-trade-offs)
-13. [Error analysis](#13-error-analysis)
-14. [Limitations and future work](#14-limitations-and-future-work)
-15. [Repository structure](#15-repository-structure)
-16. [Run it yourself](#16-run-it-yourself)
-17. [Data licence and attribution](#17-data-licence-and-attribution)
+11. [Router and palette branch](#11-router-and-palette-branch-ornamentals-non-green-leaves-non-plants)
+12. [What makes this approach different](#12-what-makes-this-approach-different)
+13. [Trade-offs](#13-trade-offs)
+14. [Error analysis](#14-error-analysis)
+15. [Limitations and future work](#15-limitations-and-future-work)
+16. [Repository structure](#16-repository-structure)
+17. [Run it yourself](#17-run-it-yourself)
+18. [Data licence and attribution](#18-data-licence-and-attribution)
 
 ---
 
@@ -76,6 +79,13 @@ On **1,644 held-out in-the-wild test images** (PlantSeg test split + PlantDoc he
   region- vs spot-level annotation) are measured and documented.
 - **Cost:** the classical pipeline takes ~0.1 s per image on a laptop CPU; the whole demo (two CNNs,
   Grad-CAM, the standard-pipeline comparison, the learned estimate) takes ~1–3 s and ~1.2 GB RAM.
+- **Beyond crop leaves (§11):** a calibrated **router** CNN in front of the pipeline sends ornamentals,
+  other houseplants and non-plant photos elsewhere while keeping **99.15 %** of crop test photos in the
+  unchanged crop pipeline; it stops **90 %** of green non-plant test objects (the green-tissue gate alone stopped 1 of 41). For 10
+  coloured or variegated ornamentals, a **palette branch** (per-species colour model + classical
+  segmentation) no longer calls healthy plants diseased: **11.5 %** of healthy ornamental test photos
+  flagged, vs **80 %** "diseased" from the crop pipeline. Detecting *small* damage on whole-plant web photos
+  is still weak (synthetic-damage AUC ≈ 0.55), which we report as a limitation.
 
 ---
 
@@ -101,6 +111,17 @@ both are shown so nothing is hidden.
 | **Trivial baseline** | always predict 16 % (validation median) | 16.9 pp, grade 29.3 % | 16.9 pp, grade 29.3 % |
 | **Effect of the CNN** | measured severity MAE, generic profile → CNN-driven | 25.9 → 19.2 pp | 25.9 → 20.2 pp |
 | | healthy false positives, generic → CNN-driven | 20.8 % → 4.3 % | 20.8 % → 4.3 % |
+
+**Router and palette branch** (§11, added later; test = routing-only third use of the crop test split, first use
+of the ornamental / houseplant / non-plant photos):
+
+| Component | Metric | Test |
+|---|---|---|
+| **Router** (13 classes, EfficientNetV2-S) | crop photos moved out of the crop pipeline | **0.85 %** (14 / 1,649) |
+| | ornamentals → right palette / houseplants recognised / non-plants stopped | 91.4 % / 96.9 % / 94.6 % |
+| | green non-plant objects stopped (green-tissue gate alone: 1 / 41) | **90.2 %** (37 / 41) |
+| **Palette branch** (442 healthy ornamental photos) | flagged as not "Normal" (crop pipeline: graded diseased) | **11.5 %** (80.3 %) |
+| | synthetic damage, image ROC-AUC (5 / 10 / 20 % of the plant) | 0.53 / 0.55 / 0.57 (weak, §11.5) |
 
 ![severity ablation](reports/figures/severity_ablation.png)
 
@@ -135,6 +156,14 @@ the disease-aware pipeline on the validation split (843 diseased + 114 healthy i
 | C3 | ConvNeXt-Tiny (IN-22k) @384 px | 73.8 % | 95.6 % | 0.680 | 83.5 % |
 | **C4** | **Ensemble C2 + C3 (chosen on val)** | **78.7 %** | **96.4 %** | **0.728** | **88.5 %** |
 
+| # | Router / palette branch (§11), **validation** | Crop moved out ↓ | Ornamentals routed ↑ | Green objects stopped ↑ | Healthy ornamentals: median abnormal % ↓ | Synthetic damage AUC ↑ |
+|---|---|---|---|---|---|---|
+| R1 | Router EfficientNet-B0 @224, temperature + thresholds on val | 0.97 % | 83.2 % | 90.9 % | – | – |
+| **R2** | **Router EfficientNetV2-S @288 (chosen)** | **0.76 %** | **95.7 %** | **100 %** | – | – |
+| P1 | Palette GMM on GrabCut pixels (no CLAHE: halo fix), optional dull/brown filter, thresholds from all fit pixels | – | – | – | ≤ 0.9 | not measured (Dice 0.07–0.44 on an earlier, easier synthetic set) |
+| P2 | + trimming 10 / 30 %, core-or-all thresholds, a more sensitive grid; synthetic lesions no longer silently missing | – | – | – | ≤ 1.9 | 0.49–0.64 |
+| P3 | + optional "brown is always abnormal" seeds (never chosen), "Normal" cut-off from healthy photos | – | – | – | ≤ 1.9 | 0.51–0.64 (final) |
+
 Things we tried that did **not** help, and kept out: test-time flip augmentation, plant-head
 re-weighting of disease scores (both neutral-to-negative on validation), the ΔE+hysteresis lesion
 detector on its own (highest recall, 0.83, but heavy over-detection; it is useful only inside a vote),
@@ -150,8 +179,11 @@ switch** (−0.1 pp).
 ```mermaid
 flowchart TD
     IMG[/"Leaf photo (any size, in the wild)"/] --> GATE{"0 · green leaf tissue present?<br/>green-tissue share ≥ 0.5 %"}
-    GATE -- "no: 'outside scope', stop" --> OUT
-    GATE -- yes --> PRE
+    GATE -- "yes" --> ROUTER{"router CNN (§11)<br/>EfficientNetV2-S @288, calibrated<br/>crop · 10 palette species ·<br/>other houseplant · non-plant"}
+    GATE -- "no: router may still find a<br/>palette species, else stop" --> ROUTER
+    ROUTER -- "crop, or not confident" --> PRE
+    ROUTER -- "palette species, p ≥ 0.30" --> PAL["Palette branch (§11.4)<br/>species colour GMM in Lab → off-palette<br/>tissue (hysteresis) → abnormal % ·<br/>Normal / Some / Significant, no disease name"]
+    ROUTER -- "other houseplant p ≥ 0.50 ·<br/>non-plant p ≥ 0.85" --> STOP[/"recognised, not assessed /<br/>outside this system's scope"/]
 
     subgraph A["Stage A: deep learning (what is it?)"]
         CNN1["EfficientNetV2-S @384<br/>(ONNX, CPU)"]
@@ -174,8 +206,8 @@ flowchart TD
         PRE --> LEAF --> LES --> POST --> MEAS
     end
 
-    GATE -- yes --> CNN1
-    GATE -- yes --> CNN2
+    ROUTER -- "crop, or not confident" --> CNN1
+    ROUTER -- "crop, or not confident" --> CNN2
     GRP -- "profile: method, colour ranges,<br/>measure, severity scale" --> LES
     GRP -- "low confidence: disease flagged<br/>uncertain + top-3 shown" --> OUT
 
@@ -384,7 +416,7 @@ Most disagreements are one grade apart (93.4 % within one grade); the estimate l
 
 *Test split, round 2. Left: the measured lesion % alone correlates weakly with the expert annotation
 (r = 0.19; round 1: 0.21): errors are small up to ~30 % infection and large above 50 %, where annotations
-outline whole diseased regions (see §13). Right: the learned correction (§10.6) doubles the correlation
+outline whole diseased regions (see §14). Right: the learned correction (§10.6) doubles the correlation
 (r = 0.40) and cuts the error to 15.2 pp, but it still compresses very heavy infections towards the middle
 (cases above ~60 % are under-predicted).*
 
@@ -422,7 +454,7 @@ any measured MAE. The "true disease" rows show 1.6 % healthy false positives bec
 ### 10.6 Round 2: detector voting, learned severity correction, calibration (test used a second time)
 
 After round 1 we found that **a constant prediction (the median of the diseased validation images, 16 %)
-has a lower test MAE (16.9 pp) than pure colour measurement (19.2 pp)**. The reason is the annotation convention (§13): many
+has a lower test MAE (16.9 pp) than pure colour measurement (19.2 pp)**. The reason is the annotation convention (§14): many
 masks outline whole diseased regions, so measurement under-estimates heavy and over-estimates light
 infections, and a mid-range constant scores well on MAE while being unable to grade, rank or outline
 anything. Round 2 addresses this; every choice was again made on validation, and the test split was
@@ -519,7 +551,7 @@ SegNeXt, which does not match its table). Our classical pipeline reaches a mean 
 label each pixel with one of 115 diseases and average per class over the dataset; we separate lesion from
 non-lesion and average per image), so read them as a reference range: classical colour methods land near
 DeepLabv3-class networks, below the best large trained networks, which learn the annotators' region-drawing
-style (§13). Training such a network as an upper bound is future work (§14).
+style (§14). Training such a network as an upper bound is future work (§15).
 
 **Performance comparison: standard pipeline vs ours vs deep segmentation networks**
 
@@ -538,7 +570,191 @@ The comparable rows: on the same 25 unseen gallery images, ours triples the stan
 DeepLabv3 (17.2 %) and DeepLabv3+ (27.2 %), without training on any mask and on a laptop CPU, while the
 best large network (SegNeXt-L, 44.5 %) remains clearly ahead. (Metric definitions differ: see above.)
 
-## 11. What makes this approach different
+---
+
+## 11. Router and palette branch (ornamentals, non-green leaves, non-plants)
+
+> Added after the main system. The crop pipeline, its weights, `disease_profiles.yaml`, `severity.yaml`
+> and every crop-pipeline number in this README are unchanged: the crop route runs exactly the code it ran before (a unit test
+> checks its output byte for byte).
+
+### 11.1 The problem
+
+The crop system has two blind spots, both caused by its design assumptions:
+
+1. **The CNN is closed-set.** It always answers with one of its 125 crop classes: for a croton, a pothos or a
+   green T-shirt alike. The green-tissue gate (§7, step 0) only stops photos with no green at all.
+2. **Stage B assumes healthy tissue is green.** On a red croton, a purple *Tradescantia* or a white-and-green
+   pothos, normal red/purple/white tissue is "not healthy green", so a healthy plant is measured as diseased
+   (§11.5: the crop system grades **80 %** of healthy ornamental test photos as diseased and **50 %** as *Severe*).
+
+### 11.2 Routing
+
+A small CNN, the **router**, runs first and decides which pipeline the photo goes to:
+
+```
+photo
+ ├─ green-tissue share < 0.5 %   (gate unchanged: the crop CNN is never run on these)
+ │     ├─ router: a palette species with p ≥ t_palette → palette branch
+ │     └─ anything else → stop: "outside this system's scope"
+ └─ green-tissue share ≥ 0.5 %   → router
+       ├─ top-1 "crop" (any confidence)            → crop pipeline, unchanged (§6–§8)
+       ├─ top-1 palette species, p ≥ t_palette     → palette branch (§11.4)
+       ├─ top-1 "other houseplant", p ≥ t_house    → "ornamental houseplant, not assessed"
+       ├─ top-1 "non-plant", p ≥ t_nonplant        → stop: "outside this system's scope"
+       └─ not confident                             → crop pipeline + warning "the plant may be outside our classes"
+```
+
+**Design rule: crop photos must never be pushed out of the crop pipeline.** "Not confident" defaults to the
+crop pipeline, and each non-crop route needs a calibrated probability above a threshold chosen on validation
+so that **at most 1 % of the crop validation photos** leave the crop pipeline (primary constraint); within
+that budget the thresholds maximise correct routing of the other classes (secondary).
+
+### 11.3 Router: data and model
+
+| Class | Source | Images (train / val / test) | Licence |
+|---|---|---|---|
+| `crop` | PlantSeg + PlantDoc-healthy: a stratified **train** sample (all 125 classes) + the full official val / test splits | 2,845 / 924 / 1,649 | CC BY-NC 4.0 / CC BY 4.0 |
+| 10 palette species (§11.4) | iNaturalist observations with CC-licensed photos, first photo per observation, flowering/fruiting observations excluded | ~208 / 45 / 44 each | mostly CC BY-NC (per-photo licence and author in the manifest) |
+| `other_houseplant` | Kaggle *House Plant Species* (47 classes, 50 per class), minus the 4 classes that are palette species | 1,487 / 318 / 318 | CC BY-NC-SA 4.0 |
+| `non_plant` | COCO 2017 val photos with no plant/fruit objects and < 2 % green, **plus Wikimedia Commons "green objects"** (doors, shirts, bottles, chairs, buses …) | 519 / 111 / 111 | COCO / per-file Commons licences |
+
+All images were downloaded and resized (long side 384 px) **on a cloud machine**, near-duplicates were removed
+with the same perceptual hash as §5 (Hamming ≤ 4, within and across classes and against the crop photos),
+non-crop classes were split 70/15/15, and contact sheets were generated for every class (a sample was checked
+by eye; the sheets are rebuilt by the collection script for a full review). The images are
+not committed; [`manifests/router_manifest.csv`](manifests/router_manifest.csv) lists every image with its
+source URL, licence and author, and `src/router/collect_router_data.py` rebuilds the set.
+
+**Model.** ImageNet-pretrained CNN, one epoch heads-only, then full fine-tuning (AdamW, warm-up + cosine,
+label smoothing 0.1, class-balanced sampling 1/count^0.5), augmentation **without any hue or saturation
+jitter** (colour is exactly what separates a red croton from a diseased crop leaf). Trained on one cloud T4
+(~1 min/epoch), temperature-calibrated on validation, exported to ONNX (`models/router/`).
+
+| Router (chosen on **validation**) | Input | Val macro-F1 | Crop photos moved out | Ornamentals routed correctly | Houseplants | Non-plants | Green non-plant objects stopped | Mac CPU |
+|---|---|---|---|---|---|---|---|---|
+| EfficientNet-B0 (ImageNet-1k) | 224 px | 0.910 | 0.97 % | 83.2 % | 90.3 % | 96.4 % | 90.9 % | – |
+| **EfficientNetV2-S (ImageNet-21k)** | 288 px | **0.969** | **0.76 %** | **95.7 %** | **98.1 %** | **99.1 %** | **100 %** | ~95 ms |
+
+Calibration: temperature T = 0.56 (ECE 0.120 → 0.005 on validation). Thresholds (validation):
+t_palette = 0.30, t_house = 0.50, t_nonplant = 0.85.
+
+### 11.4 Palette branch (classical image processing + a per-species colour model)
+
+For 10 ornamental species, chosen to mix **non-green** (croton, coleus, caladium, purple heart, copperleaf,
+polka dot plant, bloodleaf, red cordyline) and **variegated green** leaves (golden pothos, dieffenbachia),
+the branch learns what colours are *normal* for that species and marks leaf tissue that does not fit.
+It gives **no disease name**: on ornamentals, browning is as often sun scorch, over- or under-watering or
+cold as a pathogen. Every step saves an image for the demo's step strip.
+
+**Fitting (offline, train photos only).** Stage B preprocessing (resize, median filter; **no CLAHE**, see
+below) → a rough plant region with GrabCut (centre rectangle) → pixels in CIE **Lab** with L\* down-weighted
+(feature `[0.3·L*, a*, b*]`: a\* and b\* carry the pigment, L\* mostly the lighting) → a **Gaussian mixture
+model** with 6 components, fitted robustly (fit, drop the 10 % or 30 % least likely pixels, refit, twice) so
+a few damaged leaves or background pixels do not become "normal". The likelihood thresholds are quantiles of
+the training pixels' log-likelihood. Saved as `models/palettes/<species>.json` (means, covariances,
+weights, thresholds, cut-offs); inference is pure NumPy.
+
+**Inference.**
+
+| Step | Technique | Why |
+|---|---|---|
+| 1. Preprocess | Stage B step 1 without CLAHE | CLAHE re-maps L\* by neighbourhood: healthy tissue next to a dark spot became an off-palette halo on our synthetic test leaf (Dice 0.73 → 0.995 without it) |
+| 2. Palette likelihood | log p(x) of every pixel under the species GMM | one number per pixel: "how normal is this colour for this species" |
+| 3. Leaf mask ("ExG+ generalised") | normal tissue = log p ≥ t_weak; add off-palette pixels that are near normal tissue **and** inside its convex hull **and** mostly bordered by it (the ExG+ rules of §7 with "green" replaced by "normal for this species"); closing, small-hole filling, largest components; very dark pixels (L\* < 20) are shadow, not tissue | the same reasoning as ExG+: damaged tissue is off-palette, so it would otherwise be cut out of its own leaf |
+| 4. Abnormal tissue | **hysteresis**: weak = log p < t_weak, strong = log p < t_strong; keep weak regions that contain a strong pixel; opening/closing, minimum area | faint off-palette noise alone is ignored; a real spot keeps its full extent |
+| 5. Measure | abnormal % = abnormal px / leaf px; connected components = regions | |
+| 6. Label | **Normal** < 10 % ≤ **Some abnormal tissue** < 30 % ≤ **Significant abnormal tissue** | configurable assumptions (§11.5) |
+
+**TREx.** The plan suggested the *Two-fold Red Excess* index (Agarwal et al., *Plant Methods* 2025,
+doi:10.1186/s13007-025-01339-y) for red leaves. We checked the paper: TREx = 2R − G − B on raw RGB, proposed to
+**estimate chlorophyll** (SPAD) in green and anthocyanin-rich leaves photographed on a white board; it is not a
+segmentation index, so it is not used here. A per-species colour model covers red, purple and white tissue
+without a hand-made index.
+
+**Choosing the palette parameters on validation.** Per species, a grid over the dull/brown filter for fitting
+(soil, mulch, bark and dead tissue left out or not), trimming strength (10 / 30 %), threshold basis (all fit
+pixels or only the trimmed core), 9 threshold pairs (q_strong, q_weak) and an optional "brown pixels are always
+abnormal" seed rule. **Primary constraint: median abnormal area on healthy validation photos ≤ 2 %** (all 10
+species meet it); objective: Dice + image-level AUC on synthetic damage (§11.5). Full table:
+[`reports/palette_val.md`](reports/palette_val.md).
+
+### 11.5 Results
+
+**Router: routing (validation chooses, test reports).** Test is the PlantSeg/PlantDoc test split's
+**third use, for routing only, nothing tuned on it**; the ornamental / houseplant / non-plant test photos are
+used for the first time. Reports: [`reports/router_val.md`](reports/router_val.md),
+[`reports/router_test_routing.md`](reports/router_test_routing.md).
+
+| | Validation | **Test** |
+|---|---|---|
+| Crop photos moved out of the crop pipeline (primary constraint, target ≈ 0–1 %) | 0.76 % (7 / 924) | **0.85 % (14 / 1,649)** |
+| Ornamentals (10 species) routed to the right palette | 95.7 % | **91.4 %** (98.2 % kept out of the crop pipeline) |
+| Other houseplants recognised | 98.1 % | **96.9 %** |
+| Non-plant photos stopped | 99.1 % | **94.6 %** |
+| **Green non-plant objects stopped** (the gap the green-tissue gate left open: it stops 1 of the 41 test objects) | 100 % (33) | **90.2 % (41)** |
+| Router macro-F1 / expected calibration error | 0.969 / 0.005 | 0.935 / 0.007 |
+
+**The published crop numbers stay valid.** The crop pipeline is unchanged, so every crop photo the router keeps
+gets byte-identical results. The 14 moved test photos are diseased PlantSeg images (9 sent to "houseplant", 4 of
+them bananas, which are also grown as houseplants; 4 sent to a palette species; 1 carrot photo to "not a plant"); dropping them from the round-1 test results changes every metric by at most **0.0012 Dice and
+0.09 pp MAE** (table in `reports/router_test_routing.md`).
+
+**Palette branch vs the crop pipeline on healthy ornamental test photos** (442 photos, 10 species, as labelled on
+iNaturalist): the crop system calls most of them diseased, the palette branch does not.
+
+| Healthy test photos | n | Crop pipeline: mean "infected" % | Crop pipeline: graded diseased | Crop pipeline: graded *Severe* | **Palette: mean abnormal %** | **Palette: not "Normal"** |
+|---|---|---|---|---|---|---|
+| variegated green (pothos, dieffenbachia) | 89 | 23.5 | 75.3 % | 48.3 % | **2.5** | **10.1 %** |
+| non-green (8 species) | 353 | 29.3 | 81.6 % | 50.1 % | **3.4** | **11.9 %** |
+| all 10 species | 442 | 28.1 | 80.3 % | 49.8 % | **3.2** (median 0.7) | **11.5 %** |
+
+**Damage detection is the weak part (stated openly).** Licence-clean photos of *damaged* ornamental leaves
+are rare (a Wikimedia title search found ~2 for our species), so damage was simulated: real PlantSeg
+**validation** lesions pasted onto the healthy test photos' normal tissue until they cover 5 / 10 / 20 % of
+the plant region.
+
+| Synthetic damage (test) | True damaged % of our leaf mask (median) | Predicted abnormal % (median) | Image ROC-AUC vs healthy | Pixel Dice |
+|---|---|---|---|---|
+| 5 % of the plant | 1.8 | 0.9 | 0.53 | 0.18 |
+| 10 % of the plant | 3.1 | 1.2 | 0.55 | 0.19 |
+| 20 % of the plant | 5.7 | 1.5 | 0.57 | 0.19 |
+
+The branch **does not reliably detect small damage on whole-plant web photos** (validation showed the same,
+AUC 0.56–0.61). The cause is the training data, not the idea: the palettes are fitted on unsegmented scene
+photos (whole plants in gardens, pothos climbing tree bark), so they absorb soil, bark and mulch colours, and
+brown lesions then look "normal". Removing brown from the palettes, or treating brown as always abnormal, made
+the bark and soil between leaves count as damage and broke the healthy-leaf constraint on validation. The
+"Normal" cut-off is therefore set from healthy photos only (90 % of healthy validation photos read "Normal":
+< 10 %), not from a damage/healthy trade-off that does not exist yet.
+
+Per-species tables and per-image results: [`reports/palette_test.md`](reports/palette_test.md),
+`reports/palette_test_per_image.csv`; visual review sheets (healthy | synthetic, with the predicted %) are written to
+`reports/figures/palette_review/` (web photos, so generated locally, not committed).
+
+**Speed (Apple M1 CPU, median per photo):** router 93 ms, palette branch 50 ms; the crop route adds only the
+router to the previous ~1–3 s.
+
+### 11.6 Limitations of the router and palette branch
+
+- **Damage detection on ornamentals is weak** (above). Fix: fit the palettes on segmented leaves (e.g. a
+  promptable segmenter such as SAM, or hand-cleaned close-ups) and evaluate on real damaged photos; the code
+  path (fit → thresholds on validation → test) stays the same.
+- **"Abnormal" is not "diseased"**: the branch reports colour that does not fit the species, which may be sun
+  scorch, watering, cold, or a pest. It never names a disease.
+- **Cultivars not seen in training** (a yellow croton cultivar, a brown-leaved coleus) can have a normal palette
+  outside the learned one and will be flagged; brown-leaved cultivars are the hardest case.
+- **Web-label noise**: iNaturalist research-grade labels are good but not perfect; some photos show flowers,
+  several plants, or the wrong aroid (a sample of the contact sheets was checked by eye, not every photo).
+- **Router errors**: 0.85 % of crop test photos leave the crop pipeline (mostly banana); the router is still a
+  closed set of 13 classes, so an unknown plant may be confidently assigned to the nearest known one. A
+  non-plant photo that the router is not confident about falls back to the crop pipeline with a warning.
+- **Healthy is "as photographed"**: the healthy test photos are web photos labelled with a species, not checked
+  for damage one by one; some contain real damage, which inflates the healthy false-positive numbers slightly.
+
+---
+
+## 12. What makes this approach different
 
 Most public leaf-disease projects (typically PlantVillage-based) stop at classification, or report
 "infected %" from thresholding without ever checking it against ground truth. This project:
@@ -556,14 +772,18 @@ Most public leaf-disease projects (typically PlantVillage-based) stop at classif
 4. **Works on in-the-wild photos**, not lab images on plain backgrounds; PlantVillage was deliberately
    excluded because its uniform backgrounds inflate accuracy and don't transfer.
 5. **Treats the data critically:** leakage removal by perceptual hashing, label-noise discovery, mask
-   repairs, and an annotation-style analysis (see §13).
+   repairs, and an annotation-style analysis (see §14).
 6. **Stays explainable:** every number traces back to a visible step (leaf mask, candidates, cleaned
    lesions) plus a Grad-CAM heat-map for the CNN; the classical pipeline takes ~0.1 s per image on a laptop
    CPU (~1–3 s for the whole demo).
+7. **Knows what it does not know:** a calibrated router keeps crop photos in the crop pipeline and sends
+   ornamentals, houseplants and non-plants elsewhere, with the routing error measured on held-out photos;
+   for coloured ornamentals a per-species colour model replaces the "healthy = green" assumption, and the
+   branch says "abnormal tissue", never a disease it cannot know (§11).
 
 ---
 
-## 12. Trade-offs
+## 13. Trade-offs
 
 | Decision | Benefit | Cost |
 |---|---|---|
@@ -577,10 +797,12 @@ Most public leaf-disease projects (typically PlantVillage-based) stop at classif
 | Shared-denominator severity | isolates lesion-detection error | does not validate leaf segmentation itself (no leaf ground truth exists) |
 | Fixed severity cut-offs | simple, configurable | assumptions, not agronomic standards |
 | Green-tissue scope gate before the analysis | stops non-plant photos (0.0 % green) without touching any of 464 real leaf photos | non-green leaves (red maple, purple cabbage) are rejected too, and a green non-plant object still passes |
+| Router CNN in front of the crop pipeline | recognises ornamentals, houseplants and non-plants (incl. 90 % of green objects); crop photos stay (0.85 % moved) | +~0.1 s and an 81 MB model; a closed set of 13 classes; thresholds trade crop safety for fewer routed ornamentals |
+| Palette branch with a learned colour model per species | healthy coloured / variegated leaves are no longer "diseased" (11.5 % flagged vs 80 %) | weak at finding small damage on whole-plant photos; one model per species; no disease names |
 
 ---
 
-## 13. Error analysis
+## 14. Error analysis
 
 Worst cases were inspected on the validation dev set (`python -m src.evaluation.error_analysis`
 writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order of impact:
@@ -605,7 +827,7 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 
 ---
 
-## 14. Limitations and future work
+## 15. Limitations and future work
 
 - **Annotation-convention mismatch:** many PlantSeg masks outline whole diseased regions, while colour
   methods find individual lesions; this dominates the error above 50 % severity. The learned correction
@@ -616,19 +838,20 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 - **Lab-vs-wild gap and label noise:** some PlantSeg photos are posters, documents or annotated images;
   identical photos appear under two diseases.
 - **Thresholds are assumptions** (severity cut-offs, uncertainty threshold).
-- **Green leaves only, and a closed-set CNN:** the classifier always answers with one of its 125 plant
-  classes, and the lesion detectors treat healthy tissue as green. The green-tissue gate therefore stops
-  images without green plant tissue: non-plants (hands, walls, tables) **and** non-green leaves (red maple,
-  purple cabbage), which the system cannot measure correctly. A green non-plant object (a green shirt, a
-  painted wall) would still pass it. A learned out-of-distribution detector (an "unknown" class trained on
-  non-plant images, or a feature-distance check) and colour models for non-green leaves are future work.
+- **Closed sets, partly addressed (§11):** the crop classifier still answers with one of its 125 crop classes,
+  so the router now decides first whether the photo is a crop leaf at all. Remaining gaps: the router itself
+  knows 13 classes (an unknown plant may be assigned to the nearest known one), 0.85 % of crop test photos are
+  routed away, ~10 % of green non-plant objects still pass, and non-green leaves of species outside the 10
+  palette species (e.g. red maple, purple cabbage) are still out of scope.
+- **Ornamental damage detection is weak (§11.5):** the palettes are fitted on unsegmented web photos;
+  segmented leaves and real damaged photos are the next step.
 - **Future work:** train a segmentation network on the PlantSeg masks and compare it with the classical
   pipeline under the same protocol; per-plant leaf-colour models; a learned symptom-group detector for
   non-leaf organs; leaf segmentation with a promptable model (e.g. SAM) seeded by the ExG+ mask.
 
 ---
 
-## 15. Repository structure
+## 16. Repository structure
 
 ```
 ├── README.md
@@ -641,7 +864,9 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 │   ├── effv2s384/                #   EfficientNetV2-S: model.onnx (inference), best.pt (Grad-CAM), label maps
 │   ├── convnext384/              #   ConvNeXt-Tiny: model.onnx + weights_part0/1.bin (split < 100 MB, lossless)
 │   ├── effnetb0_320/             #   first baseline model: training history only (for the figures)
-│   └── learned/                  #   XGBoost severity correction
+│   ├── learned/                  #   XGBoost severity correction
+│   ├── router/                   #   router CNN (ONNX) + label map + temperature / thresholds (§11)
+│   └── palettes/                 #   one colour model (GMM) per palette species (§11.4)
 ├── src/
 │   ├── data/                     # prepare_raw_data.py (download + inspect), build_manifest.py, dataset.py
 │   ├── classifier/               # model.py, train.py, ensemble.py, calibrate.py, infer.py (ONNX), gradcam.py
@@ -649,21 +874,25 @@ writes `outputs/error_analysis/worst_cases.jpg`). Main failure modes, in order o
 │   ├── severity/                 # grade.py: profiles, severity scale, uncertainty rule
 │   ├── evaluation/               # metrics, run_eval, summarize, tune, select_methods, features,
 │   │                             #   learned_correction, error_analysis, figures
+│   ├── router/                   # collect_router_data (cloud), train_router, calibrate_router, router (inference)
+│   ├── palette/                  # palette (branch), fit_palettes, synthetic (damage), evaluate_palette, species
 │   └── utils/
 ├── demo/
 │   ├── backend/app.py            # FastAPI: analysis, standard-vs-ours comparison, example gallery
 │   ├── frontend/                 # React (Vite)
-│   ├── examples/                 # 29 unseen test images + expert masks (see ATTRIBUTION.md)
+│   ├── examples/                 # 29 unseen crop test images + expert masks, ornamental test photos (ATTRIBUTION.md)
 │   ├── run_demo.sh               # macOS / Linux launcher
 │   └── run_demo.ps1              # Windows launcher
-├── reports/figures/              # charts used in this README
+├── manifests/router_manifest.csv # every router image: source URL, licence, author (images not committed)
+├── reports/                      # router / palette reports (router_val, router_test_routing, palette_val, palette_test)
+│   └── figures/                  # charts used in this README
 ├── requirements/                 # local.txt (demo + development), train.txt (extra packages for training)
-└── tests/                        # synthetic-leaf unit tests
+└── tests/                        # unit tests: synthetic leaves, routing rules, palette branch, crop route unchanged
 ```
 
 ---
 
-## 16. Run it yourself
+## 17. Run it yourself
 
 Requirements: **Python 3.11**, **Node.js 18+** (for the React frontend), ~2 GB free RAM. No GPU needed for
 the demo.
@@ -677,7 +906,7 @@ git clone https://github.com/sidharthaxy/Leaf-disease-spot-detection.git && cd L
 python3.11 -m venv .venv
 .venv/bin/pip install -r requirements/local.txt
 # macOS only: XGBoost needs the OpenMP runtime ->  brew install libomp
-.venv/bin/python -m pytest tests -q          # optional: 12 unit tests
+.venv/bin/python -m pytest tests -q          # optional: unit tests
 bash demo/run_demo.sh                        # opens http://localhost:5173
 ```
 
@@ -695,8 +924,11 @@ If you prefer two terminals (any OS): start the backend with
 `python -m uvicorn demo.backend.app:app --port 8000` from the repository root (inside the venv), and the
 frontend with `cd demo/frontend && npm install && npm run dev`.
 
-The demo has two tabs: **Analyse a photo** (your own image: diagnosis, severity, Grad-CAM, standard vs ours,
-step strip) and **Example gallery** (unseen test images: standard vs ours vs expert, with Dice).
+The demo has two tabs: **Analyse a photo** (your own image: the router's choice with its top-3, then either
+diagnosis, severity, Grad-CAM, standard vs ours and the step strip for a crop leaf, or the palette branch with the
+species' normal-colour swatches, abnormal-tissue overlay and step strip for an ornamental) and **Example gallery**
+(unseen crop test images: standard vs ours vs expert, with Dice; plus held-out ornamental photos, one healthy per
+species and two with synthetic damage).
 First start takes ~10 s (loading two CNNs + Grad-CAM); each analysis takes ~1–3 s on a laptop CPU.
 
 ### 16.2 Use the pipeline from Python
@@ -714,6 +946,18 @@ pred = clf.predict(img, k=125)                      # all class probabilities
 res = resolve_from_prediction(pred["topk"])         # -> symptom group / uncertainty
 out = run_pipeline(img, group=res["group"])          # classical pipeline
 print(res["label"], out["measurements"]["infected_pct"], out["measurements"]["severity"])
+
+# router + palette branch (§11)
+from src.imageproc.plant_check import check_plant
+from src.imageproc.preprocess import preprocess
+from src.router.router import Router
+from src.palette.palette import Palette, run_palette
+
+route = Router().route(img, check_plant(preprocess(img)[0])["green_pct"])
+print(route["route"], route["top3"])                 # crop | crop_uncertain | palette | other_houseplant | out_of_scope
+if route["route"] == "palette":
+    m = run_palette(img, Palette.load(route["species"]))["measurements"]
+    print(m["abnormal_pct"], m["label"])            # off-palette % of the leaf, Normal / Some / Significant
 ```
 
 ### 16.3 Re-train or re-evaluate (needs the dataset; an NVIDIA GPU for training)
@@ -761,17 +1005,35 @@ print(res["label"], out["measurements"]["infected_pct"], out["measurements"]["se
    (Windows: same commands; `figures` reads the learned model from `models/learned/`, so copy
    `outputs/learned/*` there to use a newly fitted one.)
 
+6. **Router and palette branch** (§11; the image download runs best on a cloud machine, ~40 min, ~0.5 GB):
+   ```bash
+   python -m src.router.collect_router_data --out data/router          # needs ~/.kaggle/access_token
+   python -m src.router.train_router --data-root data/router --out outputs/router \
+       --backbone tf_efficientnetv2_s.in21k_ft_in1k --img-size 288 --batch-size 48 --lr-backbone 0.0002
+   python -m src.router.calibrate_router --run outputs/router --manifest data/router/manifest.csv   # val: T + thresholds
+   python -m src.palette.fit_palettes --data data/router --plantseg data/processed                  # palettes, chosen on val
+   python -m src.palette.evaluate_palette --data data/router --plantseg data/processed --old-pipeline --router  # test
+   ```
+   (`--plantseg` = a folder with the processed PlantSeg manifest; only its **validation** images + masks are used, as the
+   source of the real lesions pasted for synthetic damage. Our runs used a 435-image validation subset.)
+
 Our own runs used cloud T4 GPUs (~35–75 s per epoch); expect a laptop RTX 3050 to be somewhat slower.
 
 ---
 
-## 17. Data licence and attribution
+## 18. Data licence and attribution
 
 - **PlantSeg** (Wei et al., "PlantSeg: A Large-Scale In-the-wild Dataset for Plant Disease Segmentation"),
   Zenodo v7, **CC BY-NC 4.0**.
 - **PlantDoc** (Singh et al., 2020), **CC BY 4.0**.
-- `demo/examples/` contains **29 test-split images (+25 masks)** from these datasets, resized, redistributed for
-  non-commercial academic use with attribution (see `demo/examples/ATTRIBUTION.md`). No other dataset images
-  are included; figures containing dataset photos (`reports/figures/*.jpg`) are generated locally.
-- The trained weights in `models/` were trained on PlantSeg (CC BY-NC 4.0) and PlantDoc and are shared for
+- **Router data** (§11.3), not redistributed; every image is listed with its source, licence and author in
+  `manifests/router_manifest.csv`: **iNaturalist** observation photos (CC0 / CC BY / CC BY-SA / CC BY-NC /
+  CC BY-NC-SA, per photo), the **Kaggle "House Plant Species"** dataset (kacpergregorowicz, CC BY-NC-SA 4.0),
+  **COCO 2017** val images (Flickr licences per image) and **Wikimedia Commons** files (per-file licences).
+- `demo/examples/` contains **29 test-split images (+25 masks)** from PlantSeg / PlantDoc and a few held-out
+  **iNaturalist** test photos of ornamentals (one with synthetic lesions pasted on, labelled as such), resized,
+  redistributed for non-commercial academic use with attribution (see `demo/examples/ATTRIBUTION.md`). No other
+  dataset images are included; figures containing dataset photos (`reports/figures/**/*.jpg`) are generated locally.
+- The trained weights in `models/` were trained on PlantSeg (CC BY-NC 4.0) and PlantDoc; the router also on the
+  data above (several non-commercial licences), and the palettes on the iNaturalist photos. All are shared for
   non-commercial, academic use.

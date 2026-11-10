@@ -1,0 +1,29 @@
+{
+ "classes": [
+  "bloodleaf",
+  "caladium",
+  "coleus",
+  "copperleaf",
+  "crop",
+  "croton",
+  "dieffenbachia",
+  "golden_pothos",
+  "non_plant",
+  "other_houseplant",
+  "polka_dot",
+  "purple_heart",
+  "red_cordyline"
+ ],
+ "img_size": 288,
+ "backbone": "tf_efficientnetv2_s.in21k_ft_in1k",
+ "mean": [
+  0.485,
+  0.456,
+  0.406
+ ],
+ "std": [
+  0.229,
+  0.224,
+  0.225
+ ]
+}

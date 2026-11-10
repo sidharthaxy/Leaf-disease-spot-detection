@@ -99,3 +99,8 @@ footer { margin-top: 20px; }
 .card.reject { border-color: var(--severe); }
 .card.reject h2 { color: var(--severe); }
 .warnbox { background: #fff4e5; color: #8a4b00; margin-top: 20px; }
+
+/* --- router + palette branch --- */
+.card.route .routeline { font-weight: 700; font-size: 16px; margin-bottom: 2px; }
+.swatches { display: flex; height: 26px; border-radius: 6px; overflow: hidden; margin: 12px 0 4px; border: 1px solid var(--border); }
+.swatch { display: block; height: 100%; min-width: 14px; }

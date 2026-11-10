@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 const STEP_ORDER = ['original', 'preprocessed', 'leaf mask', 'lesion candidates', 'cleaned lesions', 'k-means clusters', 'overlay']
+const PALETTE_STEP_ORDER = ['original', 'preprocessed', 'palette likelihood', 'leaf mask', 'off-palette candidates', 'abnormal tissue', 'overlay']
+const PALETTE_CLASS = { Normal: 'sev-healthy', 'Some abnormal tissue': 'sev-moderate', 'Significant abnormal tissue': 'sev-severe' }
+const ROUTE_TEXT = {
+  crop: 'Crop leaf → disease classifier + severity pipeline',
+  crop_uncertain: 'Not sure which plant → crop pipeline (with a warning)',
+  palette: 'Ornamental with a known colour palette → palette branch',
+  other_houseplant: 'Other houseplant → not assessed',
+  out_of_scope: 'Outside this system’s scope → stopped',
+}
 const SEVERITY_CLASS = { Healthy: 'sev-healthy', Mild: 'sev-mild', Moderate: 'sev-moderate', Severe: 'sev-severe' }
 
 const pretty = (label) => {
@@ -118,14 +127,100 @@ function Comparison({ result }) {
   )
 }
 
-function Steps({ images }) {
+/* Which pipeline the router chose, and its calibrated top-3 */
+function RouteCard({ r }) {
+  if (!r) return null
+  return (
+    <div className="card route">
+      <h2>Router: which pipeline?</h2>
+      <div className="routeline">{ROUTE_TEXT[r.route] || r.route}</div>
+      <div className="muted">{r.reason}</div>
+      <ol className="top3">
+        {r.top3.map((t) => (
+          <li key={t.class}>
+            <span>{t.name}</span>
+            <span className="bar"><span style={{ width: pct(t.p) }} /></span>
+            <span className="num">{pct(t.p)}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+function Palette({ result, preview }) {
+  const p = result.palette
+  return (
+    <>
+      <section className="cards">
+        <RouteCard r={result.router} />
+        <div className="card">
+          <h2>Palette branch (image processing)</h2>
+          <div className="big">{p.species.common}</div>
+          <div className="muted"><i>{p.species.latin}</i> · normal leaf colour: {p.species.kind}</div>
+          <div className="swatches">
+            {p.swatches.map((s) => (<span key={s.hex} className="swatch" style={{ background: s.hex, flexGrow: Math.max(0.15, s.weight) }} title={`${s.hex} · ${pct(s.weight)}`} />))}
+          </div>
+          <div className="muted">normal colours of this species, learned from healthy photos (GMM in Lab)</div>
+          <div className={`sev ${PALETTE_CLASS[p.label]}`} style={{ marginTop: 12 }}>{p.label}</div>
+          <div className="stats">
+            <div><span className="num">{p.abnormal_pct.toFixed(1)}%</span><span>off-palette (abnormal) leaf area</span></div>
+            <div><span className="num">{p.n_spots}</span><span>regions</span></div>
+          </div>
+          <p className="muted">
+            "Abnormal" means the colour does not match this species' healthy palette. On ornamentals, browning is often sun
+            scorch, over- or under-watering or cold, not disease, so no disease name is given. Cut-offs: Normal &lt; {p.cutoffs_pct[0]}%,
+            Significant ≥ {p.cutoffs_pct[1]}% (assumptions chosen on validation images).
+          </p>
+        </div>
+      </section>
+      <section className="pair">
+        {preview && (<figure><img src={preview} alt="uploaded leaf" /><figcaption>Original</figcaption></figure>)}
+        <figure><img src={p.images.overlay} alt="abnormal overlay" /><figcaption>Abnormal tissue (red fill / yellow edge), leaf boundary in green</figcaption></figure>
+        <figure><img src={p.images['palette likelihood']} alt="palette likelihood" /><figcaption>Palette likelihood: bright = normal colour for this species</figcaption></figure>
+      </section>
+      <Steps images={p.images} order={PALETTE_STEP_ORDER} />
+      <Credit ex={result.example} />
+      <footer className="muted">Processed in {result.timing_s}s on CPU</footer>
+    </>
+  )
+}
+
+function Credit({ ex }) {
+  if (!ex || !ex.attribution) return null
+  return (
+    <p className="muted">
+      Photo: {ex.attribution} ({ex.licence}){ex.url && <> · <a href={ex.url} target="_blank" rel="noreferrer">source</a></>}
+      {ex.note && <> · {ex.note}</>}
+    </p>
+  )
+}
+
+function Houseplant({ result, preview }) {
+  return (
+    <section className="cards">
+      <RouteCard r={result.router} />
+      <div className="card">
+        <h2>Recognised, but not assessed</h2>
+        <div className="big">Ornamental houseplant</div>
+        <p className="muted">
+          This looks like a houseplant outside our crop classes and outside the species with a learned colour palette. The
+          crop disease classifier would force one of its 125 crop labels onto it, so we stop here instead of guessing.
+        </p>
+      </div>
+      <figure><img src={preview || result.images.original} alt="uploaded" /><figcaption>Uploaded image</figcaption></figure>
+    </section>
+  )
+}
+
+function Steps({ images, order = STEP_ORDER }) {
   const [show, setShow] = useState(false)
   return (
     <section className="steps">
       <button className="btn secondary" onClick={() => setShow((v) => !v)}>{show ? 'Hide' : 'Show'} intermediate image-processing steps</button>
       {show && (
         <div className="strip">
-          {STEP_ORDER.filter((k) => images[k]).map((k, i) => (
+          {order.filter((k) => images[k]).map((k, i) => (
             <figure key={k}><img src={images[k]} alt={k} /><figcaption>{i + 1}. {k}</figcaption></figure>
           ))}
         </div>
@@ -135,12 +230,14 @@ function Steps({ images }) {
 }
 
 function NotAPlant({ result, preview }) {
+  const byRouter = result.router && result.plant_check.status !== 'out_of_scope'
   return (
     <section className="cards">
+      {result.router && <RouteCard r={result.router} />}
       <div className="card reject">
         <h2>Outside this system's scope</h2>
-        <div className="big">No green leaf tissue found</div>
-        <p className="muted">{result.plant_check.message}</p>
+        <div className="big">{byRouter ? 'This does not look like a plant' : 'No green leaf tissue found'}</div>
+        <p className="muted">{byRouter ? result.router.reason : result.plant_check.message}</p>
         <p className="muted">
           This system is built for green leaves: disease is measured as "not healthy green", and the classifier only
           knows 125 plant classes, so it would name a plant disease for any image. This check runs first to stop that.
@@ -154,10 +251,16 @@ function NotAPlant({ result, preview }) {
 
 function Result({ result, preview }) {
   if (result.rejected) return <NotAPlant result={result} preview={preview} />
+  if (result.route === 'palette') return <Palette result={result} preview={preview} />
+  if (result.route === 'other_houseplant') return <Houseplant result={result} preview={preview} />
   const pc = result.plant_check
   return (
     <>
       {pc && pc.status === 'low_green' && <div className="error warnbox">{pc.message}</div>}
+      {result.router && result.router.route === 'crop_uncertain' && (
+        <div className="error warnbox">The plant may be outside our crop classes ({result.router.reason}). Results below assume a crop leaf.</div>
+      )}
+      {result.router && <section className="cards"><RouteCard r={result.router} /></section>}
       <section className="cards">
         <Diagnosis c={result.classifier} />
         <Severity s={result.severity} />

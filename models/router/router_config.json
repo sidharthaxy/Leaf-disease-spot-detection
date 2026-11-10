@@ -1,0 +1,29 @@
+{
+ "temperature": 0.5582,
+ "thresholds": {
+  "palette": 0.3,
+  "other_houseplant": 0.5,
+  "non_plant": 0.85
+ },
+ "reject_below_pct": 0.5,
+ "chosen_on": "validation",
+ "max_crop_misroute_pct_val": 1.0,
+ "val": {
+  "n": 1799,
+  "crop_n": 924,
+  "crop_misroute_pct": 0.7575757575757576,
+  "crop_misroute_n": 7,
+  "top1_acc": 0.981100611450806,
+  "macro_f1": 0.9691030318006623,
+  "ece": 0.00453714074154015,
+  "palette_routed_correctly_pct": 95.73991031390135,
+  "palette_kept_out_of_crop_pct": 98.87892376681614,
+  "other_houseplant_routed_correctly_pct": 98.11320754716981,
+  "other_houseplant_kept_out_of_crop_pct": 98.74213836477988,
+  "non_plant_routed_correctly_pct": 99.09909909909909,
+  "non_plant_kept_out_of_crop_pct": 99.09909909909909,
+  "green_nonplant_n": 33,
+  "green_nonplant_stopped_pct": 100.0,
+  "ece_before_T": 0.12042299363064723
+ }
+}

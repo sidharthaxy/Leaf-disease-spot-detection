@@ -41,6 +41,7 @@ dist/
 
 # Figures that contain PlantSeg/PlantDoc photos (licence: no redistribution of derived copies here)
 reports/figures/*.jpg
+reports/figures/**/*.jpg
 
 # --- Local development / cloud set-up material (not part of the public repo) ---
 CLAUDE.md
@@ -53,3 +54,6 @@ src/evaluation/sm_eval_entry.py
 
 # --- Local editor config ---
 pyrefly.toml
+
+# local planning notes
+router_palette_claude_code_prompt.md

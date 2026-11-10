@@ -8,6 +8,9 @@ POST /api/analyze                  multipart "file" -> our system + the standard
 GET  /api/examples                 the example gallery (unseen TEST images with expert masks)
 GET  /api/examples/{id}/compare    standard vs ours vs expert ground truth, with Dice and infected %
 
+Router (models/router, optional): decides crop pipeline / palette branch / other houseplant / out of scope
+before anything else (src/router/router.py). The crop route runs exactly the code it ran before.
+
 Classifier: configs/inference.yaml (ensemble, temperature-calibrated), unless MODEL_DIR is set.
 """
 
@@ -47,12 +50,14 @@ app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http
 classifier = None
 gradcam = None
 learned = None   # XGBoost severity correction (src/evaluation/learned_correction.py), if trained
+router = None    # plant router (src/router/router.py), if models/router exists
+ROUTER_DIR = ROOT / "models" / "router"
 
 
 @app.on_event("startup")
 def load_models():
     """Load ONE classifier instance (ONNX), Grad-CAM weights and the learned correction, if present."""
-    global classifier, gradcam, learned, MODEL_DIR
+    global classifier, gradcam, learned, router, MODEL_DIR
     inference_cfg = ROOT / "configs" / "inference.yaml"
     if "MODEL_DIR" not in os.environ and inference_cfg.exists():
         from src.classifier.infer import EnsembleClassifier
@@ -77,8 +82,12 @@ def load_models():
         reg = XGBRegressor()
         reg.load_model(lc / "xgb_regressor.json")
         learned = {"model": reg, "features": json.loads((lc / "meta.json").read_text())["features"]}
+    if (ROUTER_DIR / "router_config.json").exists() and os.environ.get("ROUTER", "1") == "1":
+        from src.router.router import Router
+
+        router = Router(ROUTER_DIR)
     print(f"classifier={'yes' if classifier else 'NO'}  gradcam={'yes' if gradcam else 'no'}  "
-          f"learned severity={'yes' if learned else 'no'}  examples={EXAMPLES.exists()}")
+          f"learned severity={'yes' if learned else 'no'}  router={'yes' if router else 'no'}  examples={EXAMPLES.exists()}")
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -162,6 +171,52 @@ def ours_full(img: np.ndarray) -> tuple[dict, dict]:
     return result, masks
 
 
+def router_json(route: dict) -> dict:
+    from src.palette.species import display
+
+    return {"route": route["route"], "reason": route["reason"],
+            "species": display(route["species"]) if route.get("species") else None,
+            "top3": [{**t, "name": display(t["class"])["common"] if t["class"] not in ("crop", "other_houseplant", "non_plant")
+                      else {"crop": "Crop plant (PlantSeg/PlantDoc classes)", "other_houseplant": "Other houseplant",
+                            "non_plant": "Not a plant"}[t["class"]]} for t in route["top3"]]}
+
+
+def palette_result(img: np.ndarray, species: str) -> dict:
+    """Palette branch for one image (src/palette/palette.py): abnormal tissue vs the species' normal colours."""
+    from src.palette.palette import Palette, run_palette
+    from src.palette.species import display
+
+    pal = Palette.load(species)
+    out = run_palette(img, pal)
+    m = out["measurements"]
+    return {"species": display(species), "abnormal_pct": m["abnormal_pct"], "label": m["label"], "n_spots": m["n_spots"],
+            "leaf_pct_of_image": round(100 * m["leaf_frac_of_image"], 1), "swatches": pal.swatches_bgr(),
+            "cutoffs_pct": pal.cutoffs, "images": {k: b64(v) for k, v in out["steps"].items()}}
+
+
+def routed(img: np.ndarray, gate: dict, t0: float) -> dict | None:
+    """Router decision. Returns a finished response for non-crop routes, or None -> run the crop pipeline."""
+    if router is None:
+        if gate["status"] == "out_of_scope":
+            return {"rejected": True, "plant_check": gate, "images": {"original": b64(img)}, "timing_s": round(time.time() - t0, 2)}
+        return None
+    route = router.route(img, gate["green_pct"])
+    rj = router_json(route)
+    if route["route"] == "out_of_scope":
+        return {"rejected": True, "plant_check": gate, "router": rj, "images": {"original": b64(img)},
+                "timing_s": round(time.time() - t0, 2)}
+    if route["route"] == "palette" and not (ROOT / "models" / "palettes" / f"{route['species']}.json").exists():
+        rj.update({"route": "crop_uncertain", "reason": rj["reason"] + " (no palette model installed; using the crop pipeline)"})
+        return {"crop_router": rj}
+    if route["route"] == "palette":
+        return {"route": "palette", "router": rj, "plant_check": gate, "palette": palette_result(img, route["species"]),
+                "images": {"original": b64(img)}, "timing_s": round(time.time() - t0, 2)}
+    if route["route"] == "other_houseplant":
+        return {"route": "other_houseplant", "router": rj, "plant_check": gate, "images": {"original": b64(img)},
+                "timing_s": round(time.time() - t0, 2)}
+    return {"crop_router": rj}  # crop / crop_uncertain -> unchanged crop pipeline
+
+
 def standard_json(std: dict) -> dict:
     m = std["measurements"]
     return {"infected_pct": round(m["infected_pct"], 2), "severity": severity_label(m["infected_pct"]),
@@ -195,11 +250,14 @@ async def analyze(file: UploadFile = File(...)):
     #    this a hand or a wall would be analysed as a leaf; non-green leaves are also out of scope
     #    (src/imageproc/plant_check.py)
     gate = check_plant(preprocess(img)[0], load_yaml("disease_profiles.yaml").get("plant_check"))
-    if gate["status"] == "out_of_scope":
-        return {"rejected": True, "plant_check": gate, "images": {"original": b64(img)},
-                "timing_s": round(time.time() - t0, 2)}
+    # 2) router: crop pipeline / palette branch / other houseplant / out of scope (src/router/router.py)
+    early = routed(img, gate, t0)
+    if early is not None and "crop_router" not in early:
+        return early
     result, masks = ours_full(img)
     result["plant_check"] = gate
+    if early is not None:
+        result["router"] = early["crop_router"]
     std = run_standard(img)
     result["standard"] = standard_json(std)
     result["comparison"] = {"diff": b64(diff_image(masks["base"], masks["lesion"], std["lesion_mask"]))}
@@ -220,9 +278,10 @@ def examples():
     for r in df.itertuples():
         img = cv2.imread(str(EXAMPLES / str(r.image_path)))
         out.append({"id": int(str(r.example_id)), "label": str(r.label), "plant": str(r.plant), "disease": str(r.disease),
-                    "has_mask": bool(r.mask_path), "thumb": b64(img, max_side=220)})
+                    "has_mask": bool(r.mask_path), "kind": str(getattr(r, "kind", "") or "crop"), "thumb": b64(img, max_side=220)})
     return {"note": "Official TEST-split images: never used to train the classifier, tune the pipeline or "
-                    "fit the learned correction.", "examples": out}
+                    "fit the learned correction. Ornamental examples (palette branch) are held-out test photos "
+                    "from iNaturalist.", "examples": out}
 
 
 @app.get("/api/examples/{example_id}/compare")
@@ -234,6 +293,17 @@ def compare(example_id: int):
         raise HTTPException(404, "unknown example")
     r = row.iloc[0]
     img = cv2.imread(str(EXAMPLES / r.image_path))
+    if str(r.get("kind", "")) == "palette":   # ornamental example: router -> palette branch (no expert mask)
+        gate = check_plant(preprocess(img)[0], load_yaml("disease_profiles.yaml").get("plant_check"))
+        res = routed(img, gate, t0) or {}
+        if "crop_router" in res:   # router sent it to the crop pipeline: show that honestly
+            res, _ = ours_full(img)
+            res["plant_check"] = gate
+        res["example"] = {"label": r.label, "licence": r.get("licence", ""), "attribution": r.get("attribution", ""),
+                          "url": r.get("url", ""), "note": r.get("note", "")}
+        res["images"] = {**res.get("images", {}), "original": b64(img)}
+        res["timing_s"] = round(time.time() - t0, 2)
+        return res
     result, masks = ours_full(img)
     result["plant_check"] = check_plant(preprocess(img)[0], load_yaml("disease_profiles.yaml").get("plant_check"))
     std = run_standard(img)
