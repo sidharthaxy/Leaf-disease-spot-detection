@@ -28,3 +28,5 @@ Held-out TEST photos from iNaturalist observations (never used to fit palettes o
 - `palette/inat_411774782_757566685.jpg`: (c) bellasherm, some rights reserved (CC BY-NC), CC BY-NC 4.0, https://www.inaturalist.org/observations/411774782
 - `palette/synthetic_inat_411774782_757566685.jpg`: modified from the photo above (PlantSeg lesions pasted on, CC BY-NC 4.0 parts)
 - `palette/inat_408278770_750464517.jpg`: (c) Vander Neves, some rights reserved (CC BY-NC), CC BY-NC 4.0, https://www.inaturalist.org/observations/408278770
+- `palette/inat_314165097_567413849.jpg`: (c) Juan Camilo Rivera, some rights reserved (CC BY-NC), CC BY-NC 4.0, https://www.inaturalist.org/observations/314165097
+- `palette/inat_413728387_761520258.jpg`: (c) hyunleila, some rights reserved (CC BY-NC), CC BY-NC 4.0, https://www.inaturalist.org/observations/413728387
